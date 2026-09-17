@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+# All members are pre-registered in P0 (build-plan §3-P0): registering gateway here removes
+# Andrew's cross-owner member addition, and `crates/*` covers the six member crates including
+# hesmos-ffi (owned by Stephen, created in WP-P0c) without breaking the build until then.
+members = ["crates/*", "hesmos", "gateway", "tests/integration_rust"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+# Canonical serialization source: struct field declaration order is fixed and collections are
+# BTree-based (project-context §2). Do NOT enable serde_json's `preserve_order` feature —
+# the default BTreeMap-backed object is what keeps key order deterministic for hashing.
+serde = { version = "1", features = ["derive"] }
+# `float_roundtrip` is required: event attrs feed chain hashes, so parse(serialize(x))
+# must reproduce x bit-exactly for every float — the default fast parser can be off by
+# 1 ULP, which would silently break chain verification on gate scores.
+serde_json = { version = "1", features = ["float_roundtrip"] }
+# Ulids are (de)serialized through their canonical Crockford base32 string form via
+# hand-written impls; the crate itself is used without its serde feature.
+ulid = "3"
+sha2 = "0.10"
+thiserror = "2"
+# CLI skeleton dependency (WP-P0a); command implementations land in WP-P1e.
+clap = { version = "4.6", features = ["derive"] }
+# Plan YAML parser (WP-P1a). serde_yaml itself is archived upstream; serde_yaml_ng is the
+# maintained fork that keeps the serde_yaml API surface, per WP-P1a §6.
+serde_yaml_ng = "0.10"
+# Session store / metering ledger (WP-P1d/P1e). `bundled` pins SQLite at build time so the
+# single-writer session DB does not depend on the host's libsqlite3.
+rusqlite = { version = "0.40", features = ["bundled"] }

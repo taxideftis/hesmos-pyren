@@ -1,0 +1,55 @@
+# Golden suite example — eval/suites/report.yaml (WP-P3b, consumed by WP-P3a eval core).
+#
+# FORMAT COORDINATION: this file defines the suite schema that `hesmos eval` (CLI-5,
+# owner phillip) parses. WP-P3a: if the eval core needs a different shape, revise here
+# and in api-contracts CLI-5 — do not silently diverge.
+#
+# Semantics (SS-22, CLI-5, ADR-0006):
+#   - Rerun compares STRUCTURE ONLY (node order + gate verdicts) against golden —
+#     never free text (SS-22 rule 1). Mismatch => exit 20.
+#   - Each case pins the ADR-0006 reproduction elements. Rerun forks from the blessed
+#     session (new session_id, fork_of lineage) and inherits seed / plan_hash /
+#     response_cache unchanged (SS-14 rule 4).
+#   - judge is OPTIONAL: a case without a judge section is checked by rules only and
+#     must produce zero judge.* attrs (US-26 AC3 — rules first, LLM judge optional).
+#
+# Example values below (ids/hashes) are illustrative fixtures for the format reference.
+
+suite: report
+version: 1
+description: >
+  Three-stage report pipeline: research -> draft -> verify. Exercises sequential
+  pattern, a tool-using stage, and a rubric gate.
+
+cases:
+  - id: report-happy
+    # --bless source (hesmos eval report --bless <session_id>): the approved session
+    # whose recorded structure became the golden sample below (SS-22 rule 2, spec 5.9).
+    blessed_session: 01M2Q098MPY7Z3ZW9PDAQV6066
+    # Reproduction elements inherited by the rerun fork (ADR-0006 element set).
+    plan_hash: 3f79bb7b435b05321651daefd374cdc681dc06faa65e374e38337b88ca4c62a7
+    seed: 42
+    # Optional. Recorded GLM responses replayed by keying the adapter request hash —
+    # reruns never hit the live backend. Omit for live-provider runs.
+    response_cache: cache/report-happy.jsonl
+    golden:
+      node_order: [research, draft, verify]
+      gates:
+        - node: verify
+          gate_id: rubric.v1
+          verdict: PASS
+    # Optional judge section (SS-22 rule 3): presence is what triggers the bridge.
+    judge:
+      model: glm-5.3-flash          # same adapter path as agents (ADR-0005 rule 4)
+      temperature: 0.0              # fixed at 0 — drift tracking; never omitted/None
+      prompt: judge/report.v3.md    # bridge records sha256(prompt text) as judge.prompt_hash
+      rubric: rubrics/report.v1.md  # rubric reference shown in trace show judge meta
+
+  - id: report-minimal
+    # No judge section: rules-based checks only, zero judge.* attrs, zero judge calls.
+    blessed_session: 01M2Q098MP3BM6K6ZQRX95TPPF
+    plan_hash: 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae
+    seed: 7
+    golden:
+      node_order: [research, draft, verify]
+      gates: []

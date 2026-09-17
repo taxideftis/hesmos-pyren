@@ -1,0 +1,18 @@
+[package]
+name = "integration_rust"
+version.workspace = true
+edition.workspace = true
+description = "Rust E2E harness — seed reproduction, loop guards, budget, seal (from WP-P1e on)"
+
+[dependencies]
+# D-4: E2E drives the core crates' public API only.
+hesmos-core = { path = "../../crates/hesmos-core" }
+
+[dev-dependencies]
+serde_json.workspace = true
+# S1 structural reproducibility drives the orchestrator's public API (WP-P1a).
+hesmos-orchestrator = { path = "../../crates/hesmos-orchestrator" }
+# T4/S2 matrix exhaustiveness drives the guard's validator (WP-P1b).
+hesmos-guard = { path = "../../crates/hesmos-guard" }
+# T8 budget scenarios drive the freeze→meter→judge loop (WP-P1d).
+hesmos-budget = { path = "../../crates/hesmos-budget" }

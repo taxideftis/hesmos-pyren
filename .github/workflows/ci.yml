@@ -1,0 +1,82 @@
+# CI (Phillip-owned, code-structure §6). Jobs:
+#   1. cargo fmt/clippy/test --workspace  — S6
+#   2. pytest                             — empty until WP-P0c (allowed empty until then)
+#   3. FFI fuzz                           — defined; enabled when hesmos-ffi lands (WP-P0c)
+#   4. eval demo                          — defined; activated in WP-P3a (S8)
+#   5. contract lint                      — api-contracts.md `contract:` block count must
+#                                           match CONTRACT_COUNT below; bump both together
+#                                           when the contract document is revised (§8 rules).
+name: ci
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: never
+  # grep -c '^contract:' .agent-team/04-architecture/api-contracts.md (2026-09-17 baseline)
+  CONTRACT_COUNT: "33"
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo build --workspace
+      - name: build CLI with serve feature (Andrew's P3 entry point must stay wired)
+        run: cargo build -p hesmos --features serve
+
+  contract-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: contract block count matches CI baseline
+        run: |
+          actual=$(grep -c '^contract:' .agent-team/04-architecture/api-contracts.md)
+          echo "contracts: ${actual} (expected ${CONTRACT_COUNT})"
+          [ "$actual" = "$CONTRACT_COUNT" ]
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # WP-P0c creates pyproject.toml + tests/python; until then this job is a no-op that
+      # must not fail (P0a story SKIP note).
+      - run: |
+          if [ -f pyproject.toml ]; then
+            pip install -e . && pytest tests/python
+          else
+            echo "no pyproject.toml yet (WP-P0c) — skipping pytest"
+          fi
+
+  ffi-fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: |
+          if [ -d crates/hesmos-ffi ]; then
+            cargo test -p hesmos-ffi --features fuzz
+          else
+            echo "hesmos-ffi not present yet (WP-P0c) — skipping FFI fuzz"
+          fi
+
+  eval-demo:
+    runs-on: ubuntu-latest
+    # Activated in WP-P3a (S8 regression-gate demo). Kept as a defined placeholder now so
+    # activation is a one-line change (story WP-P0a: "eval 데모 잡은 정의만 두고 P3에 활성화").
+    if: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release -p hesmos
+      - run: ./target/release/hesmos eval eval/suites/demo.yaml

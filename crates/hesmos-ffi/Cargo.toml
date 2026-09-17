@@ -1,0 +1,22 @@
+# hesmos-ffi — PyO3 boundary crate (FFI-1 surface, Stephen single owner per boundary rule 2).
+# Marshaling only (D-3): no business logic, no schema redefinition — core schema types are
+# consumed at WP-P2b (session run E2E); P0c keeps the surface self-contained.
+[package]
+name = "hesmos-ffi"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+# maturin places the cdylib at hesmos/_ffi.<abi>.so (pyproject module-name = "hesmos._ffi")
+name = "_ffi"
+crate-type = ["cdylib"]
+
+[dependencies]
+# pyo3 is declared locally: hesmos-ffi is its only consumer in the workspace (maturin
+# pins the 0.28 Bound API), so it does not belong in [workspace.dependencies].
+pyo3 = "0.28"
+# float_roundtrip matters here too: marshaled floats (gate scores) must round-trip
+# bit-exactly or chain hashes diverge between Rust and Python views.
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+ulid.workspace = true

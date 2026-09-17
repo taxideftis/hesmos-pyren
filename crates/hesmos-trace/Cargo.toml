@@ -6,5 +6,25 @@ edition.workspace = true
 [dependencies]
 # D-2: core is the only internal dependency — no sibling-crate deps, ever.
 hesmos-core = { path = "../hesmos-core" }
+serde.workspace = true
 serde_json.workspace = true
+serde_yaml_ng.workspace = true
 thiserror.workspace = true
+
+# --- SS-25 opt-in OTel bridge (ADR-0007): default OFF ---
+# Ladder: the story mandates opentelemetry 0.32.x with the otlp exporter (the
+# non-deprecated one; zipkin/jaeger/prometheus exporters are deprecated — story §6).
+# The whole send path is behind the `otel` feature: the default build compiles none
+# of it, which is what makes CF-18's "opt-out → 0 sends" structural rather than
+# behavioral. MSRV 1.75 < workspace toolchain.
+opentelemetry = { version = "0.32", optional = true }
+opentelemetry_sdk = { version = "0.32", optional = true }
+opentelemetry-otlp = { version = "0.32", optional = true }
+
+[features]
+otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
+
+[dev-dependencies]
+# Ladder: the SDK's InMemoryLogExporter (its sanctioned test double for the
+# exporter) is gated behind the `testing` feature — tests only, never shipped.
+opentelemetry_sdk = { version = "0.32", features = ["testing"] }

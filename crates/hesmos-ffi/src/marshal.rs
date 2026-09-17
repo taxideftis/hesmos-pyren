@@ -10,8 +10,6 @@
 //! Errors raised into Python are the PY-6 classes from `hesmos.exceptions` — one
 //! exception hierarchy, never a Rust-side duplicate (PY-6 verify: single parent chain).
 
-use std::collections::HashMap;
-
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyBool, PyDict, PyFloat, PyInt, PyList, PyString, PyType};
@@ -45,6 +43,20 @@ pub fn raise_hesmos(
             message,
             hint.to_string(),
         ),
+    )
+}
+
+/// CE-01 for the pre-parse stages of from_yaml (YAML syntax / render failures).
+/// Full compile verdicts go through lib.rs `compile_error`, which carries the
+/// specific CE-xx code from the CompileError itself.
+pub fn compile_parse_error(py: Python<'_>, message: String) -> PyErr {
+    raise_hesmos(
+        py,
+        "CompileError",
+        "Compile",
+        "CE-01",
+        message,
+        "fix the plan file (CE-01 — location included in the message)",
     )
 }
 
@@ -140,5 +152,28 @@ pub fn value_to_py<'py>(py: Python<'py>, value: &serde_json::Value) -> PyResult<
     })
 }
 
-/// Registry bookkeeping used by the skeleton until WP-P2b wires callbacks in.
-pub type CallbackMap = HashMap<String, Py<PyAny>>;
+/// FFI-CONTRACT: an unregistered callback signature or a call outside the contract
+/// surface — registration-time rejections live here (api-contracts FFI error set).
+pub fn contract_violation(py: Python<'_>, message: String) -> PyErr {
+    raise_hesmos(
+        py,
+        "FfiError",
+        "Ffi",
+        "FFI-CONTRACT",
+        message,
+        "register a callable matching the PY-3/PY-4 signature (one argument, dict in, dict out)",
+    )
+}
+
+/// FFI-STATE: manipulation outside the immutable session API — reuse after close,
+/// run-after-run, a plan/task that differs from the opened one (SS-16 rule 1).
+pub fn state_violation(py: Python<'_>, message: String) -> PyErr {
+    raise_hesmos(
+        py,
+        "FfiError",
+        "Ffi",
+        "FFI-STATE",
+        message,
+        "session state lives core-side and is immutable after open (FFI-1)",
+    )
+}

@@ -40,6 +40,13 @@ pub fn executor_unsupported(name: &str) -> String {
     )
 }
 
+/// bathos의 모델 판정 거부 — 코드는 bathos 원문 그대로노출(exceptions.md §5 치환 금지).
+pub fn model_refused(code: &str) -> String {
+    format!(
+        "bathos 모델 검증이 세션 개시를 거부했습니다 [{code}] — 플랜의 model_ref가 bathos 모델 레지스트리에 있는지 확인하세요 (판정 코드는 bathos 원문입니다)"
+    )
+}
+
 pub fn plan_unreadable(path: &str, cause: &str) -> String {
     format!("계획 파일을 읽을 수 없습니다: {path} — {cause} — 경로와 읽기 권한을 확인하세요")
 }
@@ -94,6 +101,38 @@ pub fn suspended_resume(session_id: &str, last_commit: Option<u64>) -> String {
     }
 }
 
-pub fn eval_not_implemented() -> String {
-    "hesmos eval — 골든 이블 수트는 WP-P3a에서 착지합니다 — 현재는 run·trace·budget 명령을 사용할 수 있습니다".to_string()
+pub fn eval_suite_unreadable(path: &str, cause: &str) -> String {
+    format!(
+        "eval 수트를 읽을 수 없습니다: {path} — {cause} — eval/suites/ 아래의 수트 파일을 확인하세요"
+    )
+}
+
+pub fn eval_suite_invalid(path: &str, cause: &str) -> String {
+    format!(
+        "eval 수트 스키마가 올바르지 않습니다: {path} — {cause} — name·cases(id·session) 형식으로 수정하세요"
+    )
+}
+
+pub fn eval_duplicate_case(suite: &str, case_id: &str) -> String {
+    format!(
+        "eval 수트 `{suite}`에 case id `{case_id}`가 중복됩니다 — case id는 골든 샘플의 키이므로 유일해야 합니다"
+    )
+}
+
+pub fn eval_golden_missing(case_id: &str, session: &str) -> String {
+    format!(
+        "case `{case_id}`의 골든 샘플이 없습니다 — 먼저 승인하세요: hesmos eval <수트> --bless {session}"
+    )
+}
+
+pub fn eval_bless_no_case(session: &str, suite: &str) -> String {
+    format!(
+        "수트 `{suite}`에 원본 세션이 {session}인 case가 없습니다 — 수트의 session 값을 확인하세요"
+    )
+}
+
+pub fn eval_bless_ambiguous(session: &str, suite: &str) -> String {
+    format!(
+        "수트 `{suite}`에 원본 세션이 {session}인 case가 여러 개입니다 — 승인 대상을 특정할 수 없으므로 case별 세션을 분리하세요"
+    )
 }

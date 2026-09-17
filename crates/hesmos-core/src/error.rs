@@ -45,7 +45,11 @@ pub enum ReasonCode {
     PROVIDER_FAILURE,
 }
 
-/// Five-class error taxonomy (exceptions.md §1).
+/// Five-class error taxonomy (exceptions.md §1) plus the Bathos base class: bathos's
+/// OWN judgments surface verbatim (exceptions.md §5 — wrap, never reinterpret), and
+/// they belong to neither the 6-kind reason vocabulary nor the Ffi marshalling
+/// vocabulary, so they ride their own class (ml.md §6d decision 15; the Python FFI
+/// spells the same class "Bathos" — each surface keeps its serde convention).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorClass {
@@ -54,6 +58,7 @@ pub enum ErrorClass {
     Platform,
     Usage,
     Ffi,
+    Bathos,
 }
 
 /// Pre-execution plan/config errors — all map to exit 3 (exceptions.md §3).

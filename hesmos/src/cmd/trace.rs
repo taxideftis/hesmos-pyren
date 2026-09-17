@@ -239,6 +239,18 @@ pub fn replay(args: ReplayArgs, root: &Path) -> i32 {
     };
 
     let fork_session = hesmos_orchestrator::derive_fork_session_id(&origin, at_seq);
+
+    // CLI-3 idempotency (ui-spec §5.2): a second identical replay regenerates its
+    // stale fork (see the shared guard for the lineage rules).
+    match crate::cmd::run::clear_stale_fork(root, &origin, &fork_session, at_seq) {
+        Ok(true) => println!(
+            "{}",
+            style.dim("기존 fork 재생성 — 이전 재현 결과를 지우고 다시 실행합니다")
+        ),
+        Ok(false) => {}
+        Err(code) => return code,
+    }
+
     println!(
         "재현 요소: session_id={}  plan_hash={}  seed={}  cache={}",
         origin,
@@ -255,7 +267,7 @@ pub fn replay(args: ReplayArgs, root: &Path) -> i32 {
         at_seq.0, fork_session, origin, at_seq.0
     );
 
-    crate::cmd::run::run_session(
+    let (code, outcome) = crate::cmd::run::run_session(
         root,
         &style,
         plan,
@@ -270,7 +282,161 @@ pub fn replay(args: ReplayArgs, root: &Path) -> i32 {
             at: at_seq,
             origin_responses: origin_dir.join("responses"),
         }),
-    )
+    );
+    render_reproduction_summary(root, &style, &origin, &fork_session, &outcome);
+    code
+}
+
+/// The ui-spec §5.2 reproduction summary — structural comparison of origin vs fork
+/// (AP-6 projection via [`hesmos_trace::compare_structure`]), commit replay count,
+/// and the W3-7 verdict line (same reason_code ⇒ "장애 재현"). Rendered after EVERY
+/// replay that actually ran; a composition failure (no outcome) has nothing to
+/// compare and stays silent.
+fn render_reproduction_summary(
+    root: &Path,
+    style: &Style,
+    origin: &SessionId,
+    fork: &SessionId,
+    outcome: &Option<hesmos_orchestrator::RunOutcome>,
+) {
+    let Some(_) = outcome else { return };
+    let Ok(origin_events) = load_events(root, origin) else {
+        return;
+    };
+    let Ok(fork_events) = load_events(root, fork) else {
+        return;
+    };
+
+    println!("── 재현 대조 {}", "─".repeat(46));
+
+    // Structure: path (node starts) + gate verdicts, projected on every read.
+    let cmp = hesmos_trace::compare_structure(
+        &hesmos_trace::project_structure(&origin_events),
+        &hesmos_trace::project_structure(&fork_events),
+    );
+    if cmp.matches {
+        let o = hesmos_trace::project_structure(&origin_events);
+        println!(
+            "  구조 대조 — 경로 {}/{} · 게이트 판정 {}/{} 일치",
+            o.nodes.len(),
+            o.nodes.len(),
+            o.gates.len(),
+            o.gates.len()
+        );
+    } else {
+        println!(
+            "{} 구조 불일치 — 원본과 다른 실행 구조가 관측됐습니다 (아래 차이 항목)",
+            style.fail()
+        );
+        for m in &cmp.mismatches {
+            println!("    {}", mismatch_line(m.clone()));
+        }
+    }
+
+    // Commits replayed: the fork's own WAL rows (checkpoint authority), not guesses.
+    let fork_db = session_paths(root, fork).2;
+    let fork_commits = SessionWal::open(&fork_db)
+        .ok()
+        .and_then(|w| w.commits(fork).ok())
+        .map(|c| c.len());
+    if let Some(n) = fork_commits {
+        println!("  커밋 재생 — fork 커밋 {n}개 기록");
+    }
+
+    // W3-7 verdict: same terminal state AND same reason code ⇒ the failure
+    // reproduced (표 10 P3). Reasons derive from each chain's last gate.fail —
+    // the WAL keeps no reason column.
+    let (origin_state, origin_reason) = terminal_facts(&origin_events);
+    let (fork_state, fork_reason) = terminal_facts(&fork_events);
+    if origin_state == fork_state && origin_reason == fork_reason {
+        match fork_reason {
+            Some(r) => println!(
+                "{} 장애 재현 — 원본과 동일 reason_code={r} (표 10 P3)",
+                style.pass()
+            ),
+            None => println!(
+                "{} 재현 성공 — 원본과 동일하게 {fork_state} 종결",
+                style.pass()
+            ),
+        }
+    } else {
+        println!(
+            "{} 재현 불일치 — 원본 {}/{} ≠ 재현 {}/{}",
+            style.fail(),
+            origin_state,
+            origin_reason.as_deref().unwrap_or("-"),
+            fork_state,
+            fork_reason.as_deref().unwrap_or("-")
+        );
+    }
+}
+
+/// Terminal facts from a chain: final_state (session.close) + the terminal reason
+/// (last gate.fail's reason_code, or a suspend-line BudgetEvent for budget
+/// suspends). Provider halts record no gate.fail → reason None → rendered "-".
+fn terminal_facts(events: &[hesmos_core::TraceEvent]) -> (String, Option<String>) {
+    let mut state = String::from("RUNNING");
+    let mut reason = None;
+    for e in events {
+        match e.kind {
+            EventKind::GateFail => reason = e.attrs.get_str("reason_code").map(String::from),
+            // A suspend-line BudgetEvent IS the recorded terminal reason for a
+            // budget suspend (SS-15): budget suspends never pass through a gate,
+            // so this event is the only evidence of WHY the session suspended.
+            EventKind::BudgetEvent if e.attrs.get_str("level") == Some("suspend") => {
+                reason = Some("BUDGET_EXCEEDED".into())
+            }
+            EventKind::SessionClose => {
+                state = e.attrs.get_str("final_state").unwrap_or("?").to_string()
+            }
+            _ => {}
+        }
+    }
+    (state, reason)
+}
+
+/// One structural difference → a diagnosis line (기대 vs 실제, in event order).
+/// Shared with `hesmos eval`, whose regression diff uses the same rendering — one
+/// mismatch always reads the same way, whichever command observed it.
+pub(crate) fn mismatch_line(m: hesmos_trace::StructureMismatch) -> String {
+    use hesmos_trace::{GateStep, StructureMismatch as M, VerdictStep};
+    fn verdict_desc(g: &GateStep) -> String {
+        match g.verdict {
+            VerdictStep::Pass => "pass".into(),
+            VerdictStep::Fail => match (&g.reason_code, g.attempts_left) {
+                (Some(r), Some(n)) => format!("fail({r}, 남은 {n}회)"),
+                (Some(r), None) => format!("fail({r})"),
+                (None, _) => "fail".into(),
+            },
+        }
+    }
+    match m {
+        M::NodeCount { expected, actual } => {
+            format!("경로 길이 — 기대 {expected}단계 ≠ 실제 {actual}단계")
+        }
+        M::NodeStep {
+            index,
+            expected,
+            actual,
+        } => format!(
+            "경로[{}] — 기대 {}(wave {}) ≠ 실제 {}(wave {})",
+            index, expected.node, expected.wave, actual.node, actual.wave
+        ),
+        M::GateCount { expected, actual } => {
+            format!("게이트 수 — 기대 {expected}판정 ≠ 실제 {actual}판정")
+        }
+        M::GateStep {
+            index,
+            expected,
+            actual,
+        } => format!(
+            "게이트[{}] {} — 기대 {} ≠ 실제 {}",
+            index,
+            expected.gate_id,
+            verdict_desc(&expected),
+            verdict_desc(&actual)
+        ),
+    }
 }
 
 use hesmos_orchestrator::ForkSource;
@@ -463,18 +629,28 @@ fn detail_line(style: &Style, e: &hesmos_core::TraceEvent) -> String {
             a.get_f32("score").unwrap_or(0.0)
         ),
         EventKind::GateFail => {
-            let retry = a
-                .get_u64("attempts_left")
-                .map(|left| format!(" (retry 시도, 남은 {}회)", left))
-                .unwrap_or_default();
-            format!(
-                "gate_id={} {}reason={} score={:.2}{}",
-                a.get_str("gate_id").unwrap_or("?"),
-                style.fail(),
-                a.get_str("reason_code").unwrap_or("?"),
-                a.get_f32("score").unwrap_or(0.0),
-                retry
-            )
+            // SS-18 cache violation: the ui-spec §8.2 display phrase, derived from the
+            // event's gate_id="cache" (the runner emits a plain gate.fail with
+            // reason_code GATE_REJECT — CACHE_INVARIANT is display material only).
+            if a.get_str("gate_id") == Some("cache") {
+                format!(
+                    "gate_id=cache {}CACHE_INVARIANT — 시스템 프롬프트 해시 불일치, 세션을 즉시 중단했습니다 (reason=GATE_REJECT)",
+                    style.fail()
+                )
+            } else {
+                let retry = a
+                    .get_u64("attempts_left")
+                    .map(|left| format!(" (retry 시도, 남은 {}회)", left))
+                    .unwrap_or_default();
+                format!(
+                    "gate_id={} {}reason={} score={:.2}{}",
+                    a.get_str("gate_id").unwrap_or("?"),
+                    style.fail(),
+                    a.get_str("reason_code").unwrap_or("?"),
+                    a.get_f32("score").unwrap_or(0.0),
+                    retry
+                )
+            }
         }
         EventKind::HandoffRequest => {
             // The request event carries only `from` + the contract hash — the `to` is
@@ -524,4 +700,134 @@ fn detail_line(style: &Style, e: &hesmos_core::TraceEvent) -> String {
         _ => String::new(),
     };
     format!("{:<16} {}", e.kind.as_vocab(), body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hesmos_core::EventAttrs;
+
+    /// Builds a minimal event with the given kind/attrs (seq order is all the
+    /// terminal-facts scan needs — no hash linking in this projection).
+    fn ev(kind: EventKind, attrs: EventAttrs) -> hesmos_core::TraceEvent {
+        hesmos_core::TraceEvent {
+            seq: 0,
+            kind,
+            node: None,
+            prev_hash: hesmos_core::Sha256Hex::parse("0".repeat(64)).expect("genesis"),
+            hash: hesmos_core::Sha256Hex::parse("0".repeat(64)).expect("genesis"),
+            attrs,
+            ts: 0,
+        }
+    }
+
+    /// W3-7's verdict fingerprint must come out of the CHAIN, not bookkeeping:
+    /// budget suspends carry their reason on the suspend-line BudgetEvent (no gate
+    /// ever failed), gate rejects on the last gate.fail, and a provider halt —
+    /// which records neither — reads as "-".
+    #[test]
+    fn terminal_facts_cover_all_three_reproduction_kinds() {
+        // BUDGET_EXCEEDED: suspend-line BudgetEvent, no gate.fail.
+        let budget = vec![
+            ev(
+                EventKind::BudgetEvent,
+                EventAttrs::new().set("level", "warn").set("spent", 1u64),
+            ),
+            ev(
+                EventKind::BudgetEvent,
+                EventAttrs::new().set("level", "suspend").set("spent", 9u64),
+            ),
+            ev(
+                EventKind::SessionClose,
+                EventAttrs::new().set("final_state", "SUSPENDED"),
+            ),
+        ];
+        assert_eq!(
+            terminal_facts(&budget),
+            ("SUSPENDED".into(), Some("BUDGET_EXCEEDED".into()))
+        );
+
+        // GATE_REJECT: the last gate.fail wins over earlier retryable fails.
+        let gate = vec![
+            ev(
+                EventKind::GateFail,
+                EventAttrs::new()
+                    .set("gate_id", "rubric.v1")
+                    .set("reason_code", "GATE_REJECT")
+                    .set("attempts_left", 1u64),
+            ),
+            ev(
+                EventKind::GateFail,
+                EventAttrs::new()
+                    .set("gate_id", "rubric.v1")
+                    .set("reason_code", "GATE_REJECT"),
+            ),
+            ev(
+                EventKind::SessionClose,
+                EventAttrs::new().set("final_state", "FAILED"),
+            ),
+        ];
+        assert_eq!(
+            terminal_facts(&gate),
+            ("FAILED".into(), Some("GATE_REJECT".into()))
+        );
+
+        // Provider halt: no recorded reason → None (rendered "-").
+        let provider = vec![ev(
+            EventKind::SessionClose,
+            EventAttrs::new().set("final_state", "HALTED"),
+        )];
+        assert_eq!(terminal_facts(&provider), ("HALTED".into(), None));
+
+        // Still running: no session.close yet.
+        assert_eq!(terminal_facts(&[]), ("RUNNING".into(), None));
+    }
+
+    /// The diff lines are the operator's diagnosis surface — each mismatch shape
+    /// names WHERE structure diverged (경로/게이트, index, 기대 vs 실제).
+    #[test]
+    fn mismatch_lines_name_the_divergence() {
+        use hesmos_trace::{GateStep, NodeStep, StructureMismatch, VerdictStep};
+        let line = mismatch_line(StructureMismatch::NodeCount {
+            expected: 2,
+            actual: 3,
+        });
+        assert!(line.contains("경로 길이") && line.contains('2') && line.contains('3'));
+
+        let line = mismatch_line(StructureMismatch::NodeStep {
+            index: 1,
+            expected: NodeStep {
+                node: "fetch".into(),
+                wave: 0,
+            },
+            actual: NodeStep {
+                node: "verify".into(),
+                wave: 1,
+            },
+        });
+        assert!(line.contains("경로[1]") && line.contains("fetch") && line.contains("verify"));
+
+        let line = mismatch_line(StructureMismatch::GateStep {
+            index: 0,
+            expected: GateStep {
+                node: Some("fetch".into()),
+                gate_id: "g0".into(),
+                verdict: VerdictStep::Pass,
+                reason_code: None,
+                attempts_left: None,
+            },
+            actual: GateStep {
+                node: Some("fetch".into()),
+                gate_id: "g0".into(),
+                verdict: VerdictStep::Fail,
+                reason_code: Some("GATE_REJECT".into()),
+                attempts_left: None,
+            },
+        });
+        assert!(
+            line.contains("게이트[0] g0")
+                && line.contains("pass")
+                && line.contains("fail(GATE_REJECT)")
+        );
+    }
 }

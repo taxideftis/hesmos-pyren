@@ -26,24 +26,40 @@ pub use contract::ContractGate;
 pub use done_criteria::DoneCriteriaGate;
 pub use g0::G0Gate;
 pub use over_delegation::OverDelegationGate;
-pub use permission::PermissionGate;
+pub use permission::{
+    GrantorAuthority, PermissionGate, cap_within_grantor, network_admitted, tool_admitted,
+};
 pub use rubric::RubricGate;
 pub use schema::SchemaGate;
 
 use crate::gate::Gate;
 
+use hesmos_core::AgentProfile;
+
+/// Runner-owned context the built-ins may need at instantiation (WP-P2a). Grows per
+/// gate need; every built-in reads only what it judges and ignores the rest.
+///
+/// `grantor_profile` is the SS-19 grantor — the FROM node's AgentProfile whose
+/// authority bounds the handoff contract's `permission_cap`. `None` at a permission
+/// boundary is the profile-less composition CE-06 forbids; the gate exists to reject
+/// it as the second defense line (AC1), so it is an Option, not a panic.
+#[derive(Clone, Copy)]
+pub struct GateDeps<'a> {
+    /// The session task — the `contract` gate instantiation needs it (goal_original
+    /// check).
+    pub session_task: &'a str,
+    /// The stage's over-delegation floor — the `over_delegation` gate instantiation.
+    pub spawn_token_floor: u64,
+    /// The boundary's grantor profile — the `permission` gate instantiation.
+    pub grantor_profile: Option<&'a AgentProfile>,
+}
+
 /// Builds a built-in gate from a plan gate reference (`"rubric.v1"` → rubric).
 ///
-/// Two gates need runner-owned context: the contract gate judges against the session's
-/// original task text, and the over-delegation gate against the node's `spawn_token_floor`
-/// (both live on the plan/runner side — `GateCtx` deliberately carries neither, its field
-/// set is fixed by TRAIT-3). `session_task` and `spawn_token_floor` are ignored by the
-/// other six.
-pub fn instantiate(
-    plan_ref: &str,
-    session_task: &str,
-    spawn_token_floor: u64,
-) -> Option<Box<dyn Gate>> {
+/// Gate ids are the contract table's spellings; the segment before the first dot,
+/// case-insensitively, maps to the built-in so plan spelling and event vocabulary stay
+/// decoupled but total.
+pub fn instantiate(plan_ref: &str, deps: &GateDeps<'_>) -> Option<Box<dyn Gate>> {
     let builtin = plan_ref
         .split('.')
         .next()
@@ -51,13 +67,16 @@ pub fn instantiate(
         .to_ascii_lowercase();
     match builtin.as_str() {
         "g0" => Some(Box::new(G0Gate)),
-        "permission" => Some(Box::new(PermissionGate)),
+        "permission" => Some(Box::new(match deps.grantor_profile {
+            Some(profile) => PermissionGate::new(GrantorAuthority::of(profile)),
+            None => PermissionGate::unprofiled(),
+        })),
         "budget" => Some(Box::new(BudgetGate)),
         "schema" => Some(Box::new(SchemaGate)),
-        "contract" => Some(Box::new(ContractGate::new(session_task))),
+        "contract" => Some(Box::new(ContractGate::new(deps.session_task))),
         "done_criteria" => Some(Box::new(DoneCriteriaGate)),
         "rubric" => Some(Box::new(RubricGate)),
-        "over_delegation" => Some(Box::new(OverDelegationGate::new(spawn_token_floor))),
+        "over_delegation" => Some(Box::new(OverDelegationGate::new(deps.spawn_token_floor))),
         _ => None,
     }
 }
@@ -65,6 +84,14 @@ pub fn instantiate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn deps<'a>() -> GateDeps<'a> {
+        GateDeps {
+            session_task: "task",
+            spawn_token_floor: 1000,
+            grantor_profile: None,
+        }
+    }
 
     /// The full built-in table resolves; an unknown reference does not (a plan naming a
     /// nonexistent gate is a composition error, not a silent pass-through).
@@ -81,8 +108,25 @@ mod tests {
             "rubric.v1",
             "over_delegation.v1",
         ] {
-            assert!(instantiate(r, "task", 1000).is_some(), "ref {r}");
+            assert!(instantiate(r, &deps()).is_some(), "ref {r}");
         }
-        assert!(instantiate("nonexistent.v1", "task", 0).is_none());
+        assert!(instantiate("nonexistent.v1", &deps()).is_none());
+    }
+
+    /// SS-19 double defense: instantiating permission WITHOUT a grantor profile gives
+    /// the unprofiled gate (reject), never a silently-passing seat.
+    #[test]
+    fn permission_without_profile_instantiates_the_rejecting_gate() {
+        use crate::gate::GatePhase;
+        use crate::test_support::Fixture;
+        use hesmos_core::NodeId;
+
+        let gate = instantiate("permission.v1", &deps()).expect("builtin");
+        let fx = Fixture::new();
+        let ctx = fx.ctx(NodeId::new("n"), GatePhase::Pre);
+        assert!(matches!(
+            gate.check(&ctx),
+            hesmos_core::GateVerdict::Reject { .. }
+        ));
     }
 }

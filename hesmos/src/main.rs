@@ -57,8 +57,19 @@ enum Command {
         #[arg(long = "json")]
         json: bool,
     },
-    /// Run a golden eval suite (CLI-5; lands in WP-P3a).
-    Eval,
+    /// Run a golden eval suite (CLI-5): re-execute each case as a fork and compare
+    /// its structure to the blessed golden sample (exit 20 = structural regression).
+    Eval {
+        /// Suite path or name (`demo` → `eval/suites/demo.yaml`).
+        suite: std::path::PathBuf,
+        /// Approval surface: run the case bound to this origin session and record
+        /// its structure as the golden sample (the only writer of the golden file).
+        #[arg(long, value_name = "SESSION_ID")]
+        bless: Option<String>,
+        /// Machine-readable output (one JSON report object).
+        #[arg(long = "json")]
+        json: bool,
+    },
     /// Serve the read-only dashboard (CLI-6; requires `--features serve`).
     #[cfg(feature = "serve")]
     Serve,
@@ -169,7 +180,9 @@ fn main() {
             },
             &root,
         ),
-        Command::Eval => cmd::eval::dispatch(),
+        Command::Eval { suite, bless, json } => {
+            cmd::eval::execute(cmd::eval::EvalArgs { suite, bless, json }, &root)
+        }
         // Pre-wired seat (code-structure §4): implementation is Andrew's (WP-P3c).
         #[cfg(feature = "serve")]
         Command::Serve => cmd::serve::dispatch(),

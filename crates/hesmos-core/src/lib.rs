@@ -29,7 +29,10 @@ pub use contract::{
     ArtifactRef, Assumption, Confidence, ContractBody, ContractJudgment, DoneCriteria,
     FailedApproach, HandoffContract, KnowledgeEntry, PermissionCap, SnapshotSlice,
 };
-pub use envelope::{Envelope, EnvelopeKind, Payload, Taint, TaintSource};
+pub use envelope::{
+    Envelope, EnvelopeKind, Payload, Taint, TaintSource, UnmarkedExternalImport,
+    external_import_verdict,
+};
 pub use error::{
     CompileError, ErrorClass, GateVerdict, HesmosError, ReasonCode, RouteDecision, SchemaError,
     code_to_static,

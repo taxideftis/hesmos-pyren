@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hesmos User Guide — 사용자 가이드</title>
+<style>
+  :root{
+    --ink:#111110; --paper:#f5f5f3; --card:#ffffff; --line:#e3e3df;
+    --sub:#6b6b66; --accent:#111110;
+    --green:#1a7f37; --yellow:#9a6700; --red:#cf222e;
+    --code-bg:#ebebe7; --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR","Segoe UI",sans-serif;
+    font-size:16px; line-height:1.75; letter-spacing:-0.01em;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--ink); text-decoration:underline; text-decoration-color:#b9b9b2; text-underline-offset:3px}
+  a:hover{text-decoration-color:var(--ink)}
+  .wrap{max-width:1180px; margin:0 auto; padding:0 24px}
+
+  /* header */
+  header.hero{padding:56px 0 40px; border-bottom:1px solid var(--line); text-align:center}
+  header.hero img{width:min(420px,72%); height:auto}
+  header.hero .tag{font-family:var(--mono); font-size:14px; color:var(--sub); margin:18px 0 6px; letter-spacing:.02em}
+  header.hero h1{font-size:30px; font-weight:700; margin:0 0 6px; letter-spacing:-0.02em}
+  header.hero .lede{font-size:17px; color:var(--sub); margin:0 auto; max-width:640px}
+  .metanav{margin-top:18px; font-size:13.5px; color:var(--sub)}
+  .metanav a{margin:0 8px}
+
+  /* layout */
+  .layout{display:grid; grid-template-columns:232px minmax(0,1fr); gap:48px; padding:40px 0 80px}
+  nav.toc{position:sticky; top:28px; align-self:start; font-size:14px}
+  nav.toc .toc-title{font-family:var(--mono); font-size:11.5px; letter-spacing:.14em; color:var(--sub); text-transform:uppercase; margin-bottom:12px}
+  nav.toc ol{list-style:none; margin:0; padding:0; counter-reset:t}
+  nav.toc li{margin:2px 0; counter-increment:t}
+  nav.toc a{display:block; padding:4px 10px; border-left:2px solid var(--line); text-decoration:none; color:var(--ink)}
+  nav.toc a::before{content:counter(t,decimal-leading-zero); font-family:var(--mono); font-size:11px; color:var(--sub); margin-right:8px}
+  nav.toc a:hover{border-left-color:var(--ink); background:var(--card)}
+
+  main{max-width:760px}
+  section{margin:0 0 56px}
+  h2{font-size:22px; font-weight:700; letter-spacing:-0.02em; margin:0 0 6px; padding-top:8px}
+  h2 .no{font-family:var(--mono); font-size:13px; color:var(--sub); font-weight:400; margin-right:10px}
+  h3{font-size:16.5px; font-weight:650; margin:28px 0 8px}
+  p{margin:10px 0}
+  .kicker{font-family:var(--mono); font-size:12.5px; color:var(--sub); letter-spacing:.06em; margin:0 0 4px}
+
+  /* quote / callout */
+  .promise{border-left:3px solid var(--ink); background:var(--card); padding:14px 18px; margin:16px 0; border-radius:0 8px 8px 0}
+  .promise p{margin:0}
+  .callout{background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px 16px; margin:14px 0; font-size:15px}
+  .callout .lab{font-family:var(--mono); font-size:11.5px; letter-spacing:.1em; color:var(--sub); display:block; margin-bottom:4px}
+  .callout.warn{border-left:3px solid var(--yellow)}
+
+  /* tables */
+  table{width:100%; border-collapse:collapse; margin:14px 0; font-size:14.5px; background:var(--card); border-radius:8px; overflow:hidden}
+  th,td{border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top}
+  th{background:var(--code-bg); font-weight:650; font-size:13.5px}
+
+  /* code */
+  code{font-family:var(--mono); font-size:0.88em; background:var(--code-bg); padding:1.5px 6px; border-radius:5px}
+  pre{background:#191918; color:#efefec; border-radius:10px; padding:16px 18px; overflow-x:auto; font-size:13.5px; line-height:1.6}
+  pre code{background:none; padding:0; color:inherit}
+  .term::before{content:"$ "; color:#8f8f88}
+  .exit-pill{font-family:var(--mono); font-size:12px; padding:1px 8px; border-radius:99px; color:#fff; white-space:nowrap}
+  .e-ok{background:var(--green)} .e-warn{background:var(--yellow)} .e-bad{background:var(--red)} .e-mid{background:#57606a}
+
+  /* misc */
+  hr{border:none; border-top:1px solid var(--line); margin:36px 0}
+  .faq dt{font-weight:650; margin-top:18px}
+  .faq dd{margin:6px 0 0}
+  footer{border-top:1px solid var(--line); padding:28px 0 56px; color:var(--sub); font-size:13.5px}
+  footer .brandline{font-family:var(--mono); font-size:12px; letter-spacing:.08em}
+
+  @media (max-width:880px){
+    .layout{grid-template-columns:1fr; gap:16px}
+    nav.toc{position:static; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:14px}
+    header.hero{padding:36px 0 28px}
+  }
+  @media print{
+    nav.toc{display:none} .layout{display:block} pre{white-space:pre-wrap}
+    body{background:#fff}
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <img src="img/hesmos-lockup-wide.png" alt="hesmos">
+    <p class="tag">Ἀσμός — 그리스어로 "벌집이 하늘로 날아오르는 순간."</p>
+    <h1>Hesmos User Guide</h1>
+    <p class="lede">여러 에이전트가 일을 나눠 하되, 모든 결정은 재현 가능하고 모든 기록은 감사 가능해야 한다 — 그것이 Hesmos의 약속입니다.</p>
+    <p class="metanav">
+      <a href="user-guide-kr.md">Markdown 버전</a>·
+      <a href="pre/Agent_Hesmos_Spec_Arc.md">설계명세</a>·
+      <a href="https://github.com/taxideftis/hesmos-pyren">GitHub</a>
+    </p>
+  </div>
+</header>
+
+<div class="wrap layout">
+
+<nav class="toc" aria-label="목차">
+  <div class="toc-title">Contents</div>
+  <ol>
+    <li><a href="#s1">Hesmos란 무엇인가</a></li>
+    <li><a href="#s2">설치</a></li>
+    <li><a href="#s3">5분 개념 잡기</a></li>
+    <li><a href="#s4">첫 실행 — 3단계</a></li>
+    <li><a href="#s5">계획 파일 작성법</a></li>
+    <li><a href="#s6">명령어 레퍼런스</a></li>
+    <li><a href="#s7">출력 읽는 법</a></li>
+    <li><a href="#s8">실패와 복구</a></li>
+    <li><a href="#s9">예산 관리</a></li>
+    <li><a href="#s10">재현과 평가 (CI 연동)</a></li>
+    <li><a href="#s11">Python에서 직접 임베딩하기</a></li>
+    <li><a href="#s12">게이트웨이·대시보드</a></li>
+    <li><a href="#s13">트러블슈팅 FAQ</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section id="s1">
+  <p class="kicker">WHAT IT IS</p>
+  <h2><span class="no">01</span>Hesmos란 무엇인가</h2>
+  <p>Hesmos는 <strong>여러 AI 에이전트에게 일을 나눠 주는 오케스트레이터</strong>입니다. 다만 일반 스웜 프레임워크와 결정적으로 다른 점이 하나 있습니다.</p>
+  <div class="promise"><p><strong>유연성은 엣지에서, 결정론은 웨이스트에서.</strong><br>
+  계획 해석·스케줄·라우팅·상태 전이는 전부 Rust 코어가 소유해서, <strong>시드만 고정하면 같은 실행이 같은 순서로 재현</strong>됩니다. LLM이 코드를 실행하는 게 아니라, 코드가 LLM을 호출합니다.</p></div>
+  <p>이렇게 얻는 것:</p>
+  <table>
+    <tr><th style="width:120px">얻는 것</th><th>의미</th></tr>
+    <tr><td><strong>재현</strong></td><td>같은 계획+같은 시드 = 같은 트레이스 해시. "어제는 됐는데 왜 지금은 안 되지?"가 사라집니다</td></tr>
+    <tr><td><strong>감사</strong></td><td>모든 상태 변화가 SHA-256 해시 체인에 기록 — 조용히 고쳐 쓰는 것이 구조적으로 불가능</td></tr>
+    <tr><td><strong>비용 통제</strong></td><td>예산 봉투가 80%에서 경고, 100%에서 자동 중단+체크포인트</td></tr>
+    <tr><td><strong>명확한 실패</strong></td><td>종료 코드 9개 대역으로 "왜 끝났는지"가 항상 기계 판독 가능</td></tr>
+  </table>
+  <p><strong>이런 분께 적합합니다</strong>: CI·야간 배치에서 에이전트를 무인 실행하는 개발자·소규모 팀. 대화형 챗봇을 찾고 있다면 Hesmos는 그 제품이 아닙니다.</p>
+</section>
+
+<section id="s2">
+  <p class="kicker">SETUP</p>
+  <h2><span class="no">02</span>설치</h2>
+  <h3>2.1 필수 요소</h3>
+  <table>
+    <tr><th>요소</th><th>버전</th><th>비고</th></tr>
+    <tr><td>Rust</td><td><code>rust-toolchain.toml</code> 고정</td><td>저장소 클론 시 자동 적용</td></tr>
+    <tr><td>Python</td><td>3.11+</td><td>AI 계층(FFI)용</td></tr>
+    <tr><td><a href="https://www.maturin.rs/">maturin</a></td><td>최신</td><td>PyO3 빌드</td></tr>
+    <tr><td>bathos 런타임</td><td>v0.4.0+</td><td><em>선택</em> — 감사 체인 연계(audit) 시에만 필요</td></tr>
+  </table>
+  <h3>2.2 빌드</h3>
+<pre><code>git clone https://github.com/taxideftis/hesmos-pyren.git
+cd hesmos-pyren
+
+cargo build --workspace      <span style="color:#8f8f88"># 코어 + CLI</span>
+pip install -e .             <span style="color:#8f8f88"># Python AI 계층</span>
+
+cargo test --workspace       <span style="color:#8f8f88"># Rust 스위트</span>
+pytest                       <span style="color:#8f8f88"># Python 스위트</span></code></pre>
+  <div class="callout"><span class="lab">개발 상태</span>
+  Hesmos는 현재 구현이 진행 중입니다(<a href="https://github.com/taxideftis/hesmos-pyren/actions/workflows/ci.yml">CI 배지</a>가 살아 있는 기준). 이 가이드의 명령어 표면은 이미 동결된 계약(CLI-1~6)을 따르며, 명령어는 웨이브가 진행되며 순차적으로 활성화됩니다.</div>
+</section>
+
+<section id="s3">
+  <p class="kicker">MENTAL MODEL</p>
+  <h2><span class="no">03</span>5분 개념 잡기</h2>
+  <table>
+    <tr><th>개념</th><th>한 줄 정의</th><th>비유</th></tr>
+    <tr><td><strong>계획 (Plan)</strong></td><td>무엇을 할지 선언한 YAML 파일 — 스테이지 목록·의존·예산</td><td>레시피</td></tr>
+    <tr><td><strong>세션 (Session)</strong></td><td>계획을 실행한 한 번의 기록 단위 — 고유 <code>session_id</code></td><td>요리 1회</td></tr>
+    <tr><td><strong>스테이지 (노드)</strong></td><td>계획의 한 단계 — 에이전트 프로필(역할·모델·도구)을 가짐</td><td>레시피의 한 공정</td></tr>
+    <tr><td><strong>핸드오프 계약</strong></td><td>노드 사이를 넘겨주는 스키마 검증된 문서 — 문자열 전달 불가</td><td>공정 인수인계서</td></tr>
+    <tr><td><strong>게이트 (Gate)</strong></td><td>노드 전후의 품질 검문 — <code>PASS / CONCERNS / FAIL</code> 3값</td><td>품질 검사대</td></tr>
+    <tr><td><strong>커밋 지점</strong></td><td>진행이 저장된 지점(<code>→ commit #N</code>) — 되돌아갈 수 있는 앵커</td><td>게임 세이브</td></tr>
+    <tr><td><strong>트레이스</strong></td><td>세션의 전체 이벤트 기록(해시 체인) — <code>trace show</code>로 열람</td><td>비행기 블랙박스</td></tr>
+    <tr><td><strong>예산 봉투</strong></td><td>실행 전 고정되는 토큰/비용 한도</td><td>카드 한도</td></tr>
+    <tr><td><strong>시드 (Seed)</strong></td><td>실행의 난수 뿌리 — 같으면 결과도 같음</td><td>주사위 고정</td></tr>
+  </table>
+  <div class="promise"><p><strong>핵심 규칙 딱 하나</strong>: Hesmos에서 LLM은 다음 노드를 고르지 않습니다. 다음 노드는 계획(그래프)과 시드가 결정하고, LLM은 자기 노드의 목표 달성만 책집니다.</p></div>
+</section>
+
+<section id="s4">
+  <p class="kicker">FIRST RUN</p>
+  <h2><span class="no">04</span>첫 실행 — 3단계</h2>
+  <h3>1단계: dry-run — 공짜로 구조 검증</h3>
+<pre class="term"><code>hesmos run plan.hes --dry-run
+컴파일 통과 — nodes=4  waves=3  외부 호출 0건 (비용 없음)
+
+  wave 1  research
+  wave 2  draft
+  wave 3  verify
+
+✓ 구조 검증 통과 — exit 0 (세션·이벤트 미생성)
+  실행: hesmos run plan.hes --seed &lt;시드&gt; --budget tokens=&lt;상한&gt;</code></pre>
+  <p>dry-run은 <strong>세션도 이벤트도 WAL도 만들지 않고 LLM 호출도 0건</strong>입니다. 계획 파일의 오탈자·참조 오류가 여기서 전부 걸립니다(위치까지 알려줍니다 — <code>파일:행:열</code>).</p>
+  <h3>2단계: run — 시드와 예산을 주고 실행</h3>
+<pre class="term"><code>hesmos run plan.hes --seed 42 --budget tokens=250000</code></pre>
+  <ul>
+    <li><code>--seed</code>를 생략하면 OS 엔트로피로 생성되어 <strong>세션 기록에 저장</strong>됩니다 — 재현하려면 기록된 값을 쓰면 됩니다.</li>
+    <li><code>--budget</code>을 생략하면 무제한(단, 기록은 됩니다)입니다. 무인 실행에서는 <strong>항상 지정하는 습관</strong>을 권합니다.</li>
+  </ul>
+  <h3>3단계: trace show — 무슨 일이 있었나</h3>
+<pre class="term"><code>hesmos trace show &lt;session_id&gt;
+hesmos trace show &lt;session_id&gt; --gate        <span style="color:#8f8f88"># 게이트 판정만</span>
+hesmos trace show &lt;session_id&gt; --handoff     <span style="color:#8f8f88"># 핸드오프만</span></code></pre>
+  <p>렌더 전에 해시 체인을 검증합니다 — 체인이 깨져 있으면 보여주지 않고 실패합니다(exit 30). 그게 이 제품의 방식입니다.</p>
+</section>
+
+<section id="s5">
+  <p class="kicker">PLANS</p>
+  <h2><span class="no">05</span>계획 파일 작성법</h2>
+  <h3>5.1 최소 예제 (Sequential)</h3>
+<pre><code>name: research-and-draft
+task: "Rust 비동기 런타임 3종을 비교 리포트로 정리"   <span style="color:#8f8f88"># 원 목표 — 필수 (goal_original)</span>
+pattern: Sequential
+
+stages:
+  - id: research
+    profile:
+      role: researcher
+      model: glm-5.3-flash
+      temperature: 0.2          <span style="color:#8f8f88"># 고정 권장 — 재현에 직결</span>
+      tools: [web_search]       <span style="color:#8f8f88"># 허용 목록 — 없으면 못 씀</span>
+    input_schema: task_brief
+    done_criteria: "출처 3건 이상 인용"
+    gates: {pre: default, post: default}
+    is_terminal: false
+
+  - id: draft
+    profile:
+      role: writer
+      model: glm-5.3-flash
+      temperature: 0.2
+      tools: []
+    input_schema: research_out
+    done_criteria: "3단 구성 완료"
+    gates: {pre: default, post: default}
+    is_terminal: true           <span style="color:#8f8f88"># 종료 선언 — 정확히 하나</span>
+
+edges: []                       <span style="color:#8f8f88"># Sequential이라 생략 — 아래 DSL/Graph 참고</span>
+budget: {session_max_tokens: 250000}</code></pre>
+  <h3>5.2 4가지 패턴</h3>
+  <table>
+    <tr><th>패턴</th><th>언제</th><th>문법</th></tr>
+    <tr><td><code>Sequential</code></td><td>순서가 정해진 파이프라인</td><td>스테이지 나열 순서</td></tr>
+    <tr><td><code>Parallel</code></td><td>독립 작업 동시 실행</td><td><code>edges</code> 없는 스테이지 동시 배치</td></tr>
+    <tr><td><code>Swarm</code></td><td>협업 분배</td><td>팀 구성 선언</td></tr>
+    <tr><td><code>Graph</code></td><td>일반 DAG</td><td><code>edges</code> 명시 또는 flow DSL</td></tr>
+  </table>
+  <p>flow DSL 한 줄로 의존을 표현할 수도 있습니다: <code>a -&gt; b, c</code> (a 뒤에 b와 c가 병렬로).</p>
+  <h3>5.3 작성 규칙 (컴파일러가 잡아주는 것들)</h3>
+  <ul>
+    <li><code>task</code>(원 목표) 누락 → <strong>CE-05</strong> 컴파일 오류</li>
+    <li>프로파일 없는 노드 → <strong>CE-06</strong></li>
+    <li>존재하지 않는 노드 참조 → 위치(<code>파일:행:열</code>)와 함께 거부</li>
+    <li>노드 중복 ID → <strong>CE-08</strong></li>
+    <li>"적응적 라우팅"이 필요하면 런타임에 LLM이 경로를 고르는 게 아니라, <strong>라우터 노드를 그래프에 명시</strong>해야 합니다 (<code>is_router: true</code>)</li>
+  </ul>
+  <p>컴파일 오류는 <strong>CE-01~09</strong> 코드로 분류되며, 모든 오류 메시지에 위치(<code>파일:행:열</code>)가 포함됩니다.</p>
+</section>
+
+<section id="s6">
+  <p class="kicker">REFERENCE</p>
+  <h2><span class="no">06</span>명령어 레퍼런스</h2>
+
+  <h3>hesmos run — 실행</h3>
+<pre><code>hesmos run &lt;plan&gt; [--seed &lt;u64&gt;] [--budget &lt;spec&gt;] [--dry-run]</code></pre>
+  <table>
+    <tr><th>플래그</th><th>값</th><th>설명</th></tr>
+    <tr><td><code>--seed</code></td><td>u64</td><td>생략 시 OS 엔트로피(기록됨). <strong>재현에는 기록값 사용</strong></td></tr>
+    <tr><td><code>--budget</code></td><td><code>tokens=250000[,cost_usd=1.5]</code></td><td>봉투는 실행 전 고정 — 세션 중 변경 불가(설계 원칙)</td></tr>
+    <tr><td><code>--dry-run</code></td><td>—</td><td>컴파일+스케줄만 출력. 세션·이벤트·WAL 미생성, 비용 0</td></tr>
+  </table>
+  <ul>
+    <li>성공 시 <code>.hesmos/sessions/&lt;session_id&gt;/</code>에 이벤트·체크포인트·응답 캐시가 기록됩니다.</li>
+    <li>같은 입력을 다시 실행하면 <strong>새 세션</strong>입니다 — 비교는 트레이스 해시로 하면 됩니다.</li>
+  </ul>
+
+  <h3>hesmos trace show — 열람</h3>
+<pre><code>hesmos trace show &lt;session_id&gt; [--gate] [--handoff] [--limit N] [--json]</code></pre>
+  <table>
+    <tr><th>플래그</th><th>기본</th><th>설명</th></tr>
+    <tr><td><code>--gate</code></td><td>—</td><td>게이트 판정만 필터</td></tr>
+    <tr><td><code>--handoff</code></td><td>—</td><td>핸드오프만 필터</td></tr>
+    <tr><td><code>--limit</code></td><td>200</td><td>전체 렌더 방지 상한</td></tr>
+    <tr><td><code>--json</code></td><td>—</td><td>기계 판독 출력(도구 연동용)</td></tr>
+  </table>
+  <p>읽기 전용·멱등. 렌더 전 <strong>체인 검증 실패 시 exit 30</strong> — 변조된 기록은 재구성해 보여주지 않습니다.</p>
+
+  <h3>hesmos trace replay — 재현·재개</h3>
+<pre><code>hesmos trace replay &lt;session_id&gt; [--at step &lt;N&gt;]</code></pre>
+  <table>
+    <tr><th>항목</th><th>내용</th></tr>
+    <tr><td><code>--at step N</code> 생략</td><td>전체 재생 — 동일 4요소면 <strong>트레이스 해시가 결정적으로 동일</strong></td></tr>
+    <tr><td><code>--at step N</code></td><td>N번 커밋 지점에서 분기 재실행 — fork가 새 세션으로 생성, <code>fork_of</code>에 계보 기록</td></tr>
+    <tr><td>N이 커밋 지점이 아니면</td><td><span class="exit-pill e-mid">exit 2</span> 거부 (<code>NOT_COMMIT_POINT</code>) — trace show의 <code>→ commit #N</code> 마커 위치를 쓰세요</td></tr>
+    <tr><td>예산</td><td>재개 세션도 <code>--budget</code>으로 새로 고정해야 합니다</td></tr>
+  </table>
+  <div class="callout warn"><span class="lab">주의</span>
+  <strong><code>resume</code> 명령은 존재하지 않습니다.</strong> 중단된 세션의 재개는 <strong>언제나</strong> <code>trace replay --at</code>입니다. 새 명령을 찾지 마세요 — 그게 설계입니다.</div>
+
+  <h3>hesmos budget — 소진 확인</h3>
+<pre><code>hesmos budget &lt;session_id&gt;          <span style="color:#8f8f88"># 세션 단위</span>
+hesmos budget --team &lt;team_id&gt;      <span style="color:#8f8f88"># 팀·세션·에이전트 3단위 집계</span>
+hesmos budget &lt;session_id&gt; --json   <span style="color:#8f8f88"># 기계 판독</span></code></pre>
+  <p>소진액·잔여·<code>budget.event</code> 이력을 미터 대장에서 보여줍니다. 읽기 전용·멱등.</p>
+
+  <h3>hesmos eval — 회귀 게이트</h3>
+<pre><code>hesmos eval &lt;suite.yaml&gt; [--bless &lt;session_id&gt;] [--json]</code></pre>
+  <ul>
+    <li>승인된 세션을 골든 샘플로 등록: <code>--bless &lt;session_id&gt;</code> (유일한 승인 표면)</li>
+    <li>스위트의 각 케이스를 재실행해 <strong>구조</strong>(노드 순서·게이트 판정)를 골든과 대조 — 자유 텍스트 비교가 아닙니다</li>
+    <li>불일치 검출 시 <span class="exit-pill e-bad">exit 20</span> → CI에서 실패 처리</li>
+  </ul>
+<pre><code><span style="color:#8f8f88"># .github/workflows 예제 — 구조 회귀 감시</span>
+- run: hesmos eval eval/suites/my-suite.yaml</code></pre>
+
+  <h3>hesmos serve — 게이트웨이</h3>
+<pre><code>hesmos serve [--bind &lt;addr&gt;] [--port &lt;n&gt;]</code></pre>
+  <p>기본 <code>127.0.0.1:7330</code> (루프백 — 외부 바인딩 시 경고). SIGTERM에 우아하게 종료(exit 0), 포트 점유 시 exit 3. 자세한 것은 <a href="#s12">§12</a>.</p>
+</section>
+
+<section id="s7">
+  <p class="kicker">READING OUTPUT</p>
+  <h2><span class="no">07</span>출력 읽는 법</h2>
+  <h3>7.1 세션 상태 7종</h3>
+  <table>
+    <tr><th>상태</th><th>심볼</th><th>색(TTY)</th><th>의미</th><th>종료 코드</th></tr>
+    <tr><td>INIT</td><td><code>·</code></td><td>—</td><td>초기화 중</td><td>— (진행 중)</td></tr>
+    <tr><td>RUNNING</td><td><code>&gt;</code></td><td>—</td><td>실행 중</td><td>— (진행 중)</td></tr>
+    <tr><td>SUSPENDED</td><td><code>‖</code></td><td>yellow</td><td>중단 — <strong>재개 가능</strong> (<code>replay --at</code>)</td><td><span class="exit-pill e-warn">10</span> <span class="exit-pill e-warn">130</span></td></tr>
+    <tr><td>HALTED</td><td><code>✗</code></td><td>red</td><td>정지 — 정책 가드 (재개 가능)</td><td><span class="exit-pill e-bad">11</span></td></tr>
+    <tr><td>ABORTED</td><td>—</td><td>red</td><td>외부 의존 소진</td><td><span class="exit-pill e-bad">12</span></td></tr>
+    <tr><td>FAILED</td><td>—</td><td>red</td><td>작업 판정 실패</td><td><span class="exit-pill e-bad">20</span></td></tr>
+    <tr><td>COMPLETED</td><td><code>✓</code></td><td>green</td><td>완료</td><td><span class="exit-pill e-ok">0</span></td></tr>
+  </table>
+  <h3>7.2 세 가지 규칙</h3>
+  <ol>
+    <li><strong>3색만 씁니다</strong> — green=성공, yellow=경고, red=실패. 강조는 굵게.</li>
+    <li><strong>색은 단독 신호가 아닙니다</strong> — 항상 심볼+단어가 함께 나옵니다 (<code>✗ FAIL GATE_REJECT</code>). 색각 터미널에서도 안전.</li>
+    <li><strong>같은 상태는 어디서나 같은 이름</strong> — CLI든 CI 로그든 대시보드든 어휘 하나.</li>
+  </ol>
+  <h3>7.3 커밋 마커</h3>
+  <p>트레이스에서 <code>→ commit #N</code> 행이 보이면 그것이 세이브 지점입니다. <code>trace replay --at step N</code>의 N은 이 번호입니다.</p>
+</section>
+
+<section id="s8">
+  <p class="kicker">FAILURE &amp; RECOVERY</p>
+  <h2><span class="no">08</span>실패와 복구</h2>
+  <h3>8.1 reason code 6종 — 원인과 처치</h3>
+  <table>
+    <tr><th>코드</th><th>계열</th><th>무슨 일</th><th>처치</th></tr>
+    <tr><td><code>BUDGET_EXCEEDED</code></td><td>CANCELLED <span class="exit-pill e-warn">10</span></td><td>예산 100% 도달 — 체크포인트 남음</td><td><code>budget</code> 상향 후 <code>replay --at</code></td></tr>
+    <tr><td><code>MAX_HANDOFFS</code></td><td>CANCELLED <span class="exit-pill e-bad">11</span></td><td>누적 핸드오프 20 초과</td><td>계획의 그래프를 단순화한 뒤 replay</td></tr>
+    <tr><td><code>REPETITIVE_HANDOFF</code></td><td>CANCELLED <span class="exit-pill e-bad">11</span></td><td>A→B→A 왕복 감지(윈도우 8)</td><td>역할 경계를 분리하거나 라우터 명시</td></tr>
+    <tr><td><code>TIMEOUT</code></td><td>CANCELLED <span class="exit-pill e-bad">12</span></td><td>노드 시간 초과 (retry 2회 소진)</td><td>타임아웃 상향 또는 작업 분할</td></tr>
+    <tr><td><code>PROVIDER_FAILURE</code></td><td>CANCELLED <span class="exit-pill e-bad">12</span></td><td>LLM 호출 실패 (retry 2회 소진)</td><td>프로바이더 상태 확인 후 replay</td></tr>
+    <tr><td><code>GATE_REJECT</code></td><td><strong>FAILED</strong> <span class="exit-pill e-bad">20</span></td><td>게이트가 최종 거부</td><td>계획·루브릭 수정 — <strong>재시도로 못 고칩니다</strong></td></tr>
+  </table>
+  <h3>8.2 기억할 구분 하나</h3>
+  <div class="promise"><p><strong>CANCELLED(10·11·12·130)는 "재개가 복구", FAILED(20)는 "수정이 복구"입니다.</strong><br>
+  코드만 봐도 CI에서 분기할 수 있습니다: 10·11·12·130 → 재시도 정책, 20 → 사람이 원인 조사.</p></div>
+  <h3>8.3 자주 겪는 시나리오 3개</h3>
+  <p><strong>① 야간 배치가 아침에 exit 10</strong><br>
+  예산 소진입니다. <code>hesmos budget &lt;session_id&gt;</code>로 소진 확인 → <code>--budget tokens=&lt;상향&gt;</code>과 함께 <code>hesmos trace replay &lt;session_id&gt; --at step &lt;마지막 커밋&gt;</code>.</p>
+  <p><strong>② 에이전트 둘이 서로 일을 계속 넘김</strong><br>
+  <code>REPETITIVE_HANDOFF</code>로 HALTED 됩니다(윈도우 8). 설계상 정상 작동입니다 — 두 노드의 <code>done_criteria</code>가 겹치지 않게 계획을 고치고 replay.</p>
+  <p><strong>③ 재실행했는데 결과가 어제와 다름</strong><br>
+  시드가 다르면 경로가 다릅니다(정상). 어제의 것과 <strong>같은지</strong> 확인하려면 세션 기록의 시드로 재실행해 트레이스 해시를 비교하세요. 같은 시드+같은 계획인데 해시가 다르면 그건 버그입니다 — 저희가 고칠 것.</p>
+</section>
+
+<section id="s9">
+  <p class="kicker">BUDGET</p>
+  <h2><span class="no">09</span>예산 관리</h2>
+  <ul>
+    <li><strong>봉투는 실행 전 고정</strong>: <code>--budget tokens=250000[,cost_usd=1.5]</code>. 세션 중 변경은 불가능합니다(구조적으로).</li>
+    <li><strong>80%에서 경고</strong>(1회, 계속 진행), <strong>100%에서 suspend+체크포인트</strong>.</li>
+    <li>예산 판정은 <strong>세션·팀·에이전트 3단위</strong>로 집계됩니다 — <code>hesmos budget --team &lt;team_id&gt;</code>.</li>
+    <li>judge 비용은 봉투 밖(스키마 수준에서 분리) — eval 스위트의 judge만 별도 과금 관점으로 보세요.</li>
+  </ul>
+</section>
+
+<section id="s10">
+  <p class="kicker">REPRODUCTION</p>
+  <h2><span class="no">10</span>재현과 평가 (CI 연동)</h2>
+  <p>Hesmos의 재현은 <strong>4요소</strong>로 성립합니다: <code>session_id · plan_hash · seed · 응답 캐시</code>.</p>
+<pre><code><span style="color:#8f8f88"># 1) 베이스라인 실행 (시드 기록)</span>
+hesmos run plan.hes --seed 42 --budget tokens=250000
+
+<span style="color:#8f8f88"># 2) 승인 — 이 구조가 골든 샘플이 됨</span>
+hesmos eval eval/suites/core.yaml --bless &lt;session_id&gt;
+
+<span style="color:#8f8f88"># 3) CI에서 회귀 감시 — 구조가 바뀌면 exit 20</span>
+hesmos eval eval/suites/core.yaml</code></pre>
+  <ul>
+    <li>응답 캐시가 있으면 <strong>바이트 단위</strong> 재현, 없으면 <strong>구조 단위</strong> 재현입니다(노드 순서·게이트 판정).</li>
+    <li><code>eval</code>은 자유 텍스트를 비교하지 않습니다 — 흐릿한 승인이 구조가 무너지는 걸 보고 못 하는 게 포인트입니다.</li>
+  </ul>
+</section>
+
+<section id="s11">
+  <p class="kicker">EMBEDDING</p>
+  <h2><span class="no">11</span>Python에서 직접 임베딩하기</h2>
+  <p>Rust 코어는 PyO3로 Python에 노출됩니다 (<code>import hesmos</code>). 계획 파일 대신 코드에서 세션을 다룰 때:</p>
+<pre><code>import hesmos
+
+<span style="color:#8f8f88"># 세션 개시 + 계획 주입</span>
+handle = hesmos.session_open(...)
+plan = hesmos.plan_from_yaml(open("plan.hes").read())
+
+<span style="color:#8f8f88"># 프롬프트 빌더 — 캐시 breakpoint(3계층) 자동 배치</span>
+messages = hesmos.core.build_messages(stage, snapshot)
+
+<span style="color:#8f8f88"># 설정 변경은 기본 deferred (다음 세션 적용) — 즉시는 명시적 opt-in</span>
+hesmos.core.apply_change(target)            <span style="color:#8f8f88"># deferred (기본)</span>
+hesmos.core.apply_change(target, now=True)  <span style="color:#8f8f88"># 즉시 — compression만이 유일한 무단 즉시 예외</span></code></pre>
+  <p>기억할 규칙:</p>
+  <ul>
+    <li><code>build_messages</code>가 반환한 프롬프트는 <strong>byte-stable</strong>이 보장됩니다 — 첫 build 후 system prompt·tool 정의를 바꾸려 하면 거부됩니다(타입으로 강제).</li>
+    <li>프롬프트 해시 검증은 코어가 매 턴 수행합니다 — Python 쪽에서 검증을 다시 만들지 마세요(이중 진실 원천 금지).</li>
+    <li>토큰 중복 측정기(<code>DuplicateTokenMeter</code>)는 기본 임계값이 없습니다 — 측정·기록만 하고, 상한은 운영 데이터가 생긴 뒤 정하는 것이 설계입니다.</li>
+  </ul>
+</section>
+
+<section id="s12">
+  <p class="kicker">GATEWAY</p>
+  <h2><span class="no">12</span>게이트웨이·대시보드</h2>
+<pre class="term"><code>hesmos serve                     <span style="color:#8f8f88"># 127.0.0.1:7330</span></code></pre>
+  <ul>
+    <li><strong>조회 전용</strong>입니다. 실행·조작은 언제나 CLI가 소유합니다 — 대시보드에서 무언가를 "승인"하는 버튼은 없습니다.</li>
+    <li>세션 목록·예산·감사 데이터(코어 경유)·WS 이벤트 스트리밍 제공.</li>
+    <li>감사 데이터는 게이트웨이가 bathos에 직접 묻지 않고 <strong>코어를 경유</strong>합니다 — 감사 경로가 하나뿐이어야 하기 때문입니다.</li>
+  </ul>
+</section>
+
+<section id="s13">
+  <p class="kicker">FAQ</p>
+  <h2><span class="no">13</span>트러블슈팅 FAQ</h2>
+  <dl class="faq">
+    <dt>Q. <code>resume</code> 명령이 없나요?</dt>
+    <dd>없습니다. <code>hesmos trace replay &lt;session_id&gt; --at step &lt;N&gt;</code>이 유일한 재개 경로입니다.</dd>
+    <dt>Q. dry-run은 통과하는데 run이 바로 죽어요.</dt>
+    <dd>dry-run은 외부 호출이 없으니 프로바이더 문제는 run에서 처음 보입니다. <code>PROVIDER_FAILURE</code>(exit 12)면 프로바이더 상태 확인, <code>3</code>(Compile)이면 계획 파일 위치 정보를 확인하세요.</dd>
+    <dt>Q. exit 2가 뜨는데 문서와 값이 달라요.</dt>
+    <dd><code>hesmos</code>의 exit 2(Usage)와 <code>bathos</code> 엔진의 exit 2(게이트 차단)는 <strong>서로 다른 바이너리의 값</strong>입니다. 어느 명령이 내보냈는지 먼저 확인하세요.</dd>
+    <dt>Q. 트레이스를 열었더니 exit 30으로 거부됩니다.</dt>
+    <dd>로컬 체인 검증 실패(<code>EVIDENCE-INVALID</code>)입니다 — 기록이 변조되었거나 손상됐다는 뜻입니다. 변조된 증거를 그려주지 않는 것이 이 제품의 정직함입니다.</dd>
+    <dt>Q. LLM이 실행 도중에 다른 노드를 부르게 할 수 있나요?</dt>
+    <dd>설계상 불가능합니다(원칙 P1). 경로가 필요하면 <code>is_router: true</code> 라우터 노드를 그래프에 명시하세요 — 그 판정도 전부 이벤트로 기록됩니다.</dd>
+    <dt>Q. 모델을 바꾸고 싶어요.</dt>
+    <dd>스테이지 <code>profile.model</code>로 선언합니다(예: <code>glm-5.3-flash</code>). 런타임 백엔드 혼합은 거부됩니다 — 한 세션, 한 백엔드.</dd>
+  </dl>
+  <hr>
+  <p><strong>더 읽을거리</strong> — <a href="../README.md">README</a> · <a href="pre/Agent_Hesmos_Spec_Arc.md">설계명세 (REV A)</a> · <a href="user-guide-kr.md">Markdown 버전</a></p>
+</section>
+
+</main>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span class="brandline">Ἀσμός — Greek for the moment a hive takes flight · an auditable control plane for multi-agent work</span><br>
+    Hesmos User Guide · MIT License © 2026 ταξιδευτής
+  </div>
+</footer>
+
+</body>
+</html>

@@ -28,6 +28,7 @@ hesmos-budget = { path = "../crates/hesmos-budget" }
 hesmos-trace = { path = "../crates/hesmos-trace" }
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
+serde.workspace = true
 # Cooperative SIGINT (CLI-1 exit 130): flips the runner's shared interrupt flag.
 ctrlc.workspace = true
 
@@ -39,3 +40,7 @@ gateway = { path = "../gateway", optional = true }
 # Pre-wired in WP-P0a (code-structure §4): `cargo build -p hesmos --features serve`
 # compiles; the dispatch seat exists — implementation is Andrew's (WP-P3c, serve.rs).
 serve = ["dep:gateway"]
+# SS-25 (ADR-0007): forwards to hesmos-trace's `otel` feature — the default CLI
+# build contains no remote send path; a feature build still exports nothing unless
+# HESMOS_OTEL_ENDPOINT is set (composition::progress_sink holds the runtime key).
+otel = ["hesmos-trace/otel"]

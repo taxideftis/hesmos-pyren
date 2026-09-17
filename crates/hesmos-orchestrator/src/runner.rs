@@ -43,11 +43,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde::{Deserialize, Serialize};
 
 use hesmos_core::{
-    AgentRole, BudgetEnvelope, BudgetState, CommitSeq, CompileError, Confidence, CorrelationId,
-    Envelope, EnvelopeId, EnvelopeKind, EventAttrs, EventKind, EventSink, GateVerdict,
-    HandoffContract, ModelRef, NodeId, Payload, PendingEvent, Plan, PolicySet, ReasonCode,
-    RouteDecision, RunId, SchemaId, SessionHandle, SessionId, SessionState, Sha256Hex, TeamId,
-    ToolName, WaveIndex, canonical_sha256,
+    AgentProfile, AgentRole, BudgetEnvelope, BudgetState, CommitSeq, CompileError, Confidence,
+    CorrelationId, Envelope, EnvelopeId, EnvelopeKind, EventAttrs, EventKind, EventSink,
+    GateVerdict, HandoffContract, ModelRef, NodeId, Payload, PendingEvent, Plan, PolicySet,
+    ReasonCode, RouteDecision, RunId, SchemaId, SessionHandle, SessionId, SessionState, Sha256Hex,
+    TeamId, ToolName, WaveIndex, canonical_sha256,
 };
 
 use crate::engine::{CommitReceipt, CompiledGraph, DeterministicEngine, GraphEngine, StageOutput};
@@ -90,6 +90,20 @@ pub struct ExecutionReport {
     pub tokens_out: u64,
     /// Echoed verbatim into the llm.call event (deterministic executors report 0).
     pub latency_ms: u64,
+    /// What actually served this turn — the EXECUTOR's self-reported identity
+    /// (echo double, FFI bridge, ...), echoed verbatim into the llm.call event.
+    /// The runner has no opinion: it never names a provider itself, so a real
+    /// adapter's identity reaches the trace un-renamed (ml.md §6d decision 16).
+    pub provider: String,
+    /// The system prompt hash THIS turn ran with (PY-7 reports per turn). `None` =
+    /// the executor has no prompt to report (the W5 echo world) — the cache
+    /// sentinel verifies only what a frozen session's turns declare.
+    pub prompt_hash: Option<Sha256Hex>,
+    /// The external origin this output READ from, when it did (SS-20 rule 1). The
+    /// runner marks the output envelope Tainted on this declaration — the only
+    /// sanctioned Clean→Tainted path, so an unmarked external envelope is
+    /// unrepresentable at the assembly.
+    pub external_origin: Option<String>,
 }
 
 /// A failed node execution. The runner retries this on the shared bounded budget
@@ -137,6 +151,10 @@ pub struct GateRun<'a> {
     pub session_task: &'a str,
     /// The stage's over-delegation floor — `over_delegation` gate instantiation.
     pub spawn_token_floor: u64,
+    /// The SS-19 grantor — the FROM node's AgentProfile whose authority bounds the
+    /// boundary contract's `permission_cap` (`permission` gate instantiation). `None`
+    /// instantiates the profile-less gate, which rejects (AC1 double defense).
+    pub grantor_profile: Option<&'a AgentProfile>,
     /// Extra event attributes (WP-P1e escalation records: escalated_to /
     /// escalation_reason) appended to the emitted gate event.
     pub extra: &'a [(&'a str, serde_json::Value)],
@@ -187,6 +205,27 @@ pub trait BudgetConductor {
     ) -> SpendVerdict;
 }
 
+/// The SS-18 cache sentinel seam (WP-P2a core half): verifies ONE turn's reported
+/// prompt hash against the session's frozen system-prompt invariant. The judgment
+/// lives in the guard (`hesmos_guard::cache`); this seam keeps its type on the
+/// composition side (D-2 — the runner never names a sibling crate).
+///
+/// Contract note (exceptions.md §4 special row): a `Violated` answer means the runner
+/// halts IMMEDIATELY — no bounded retry, no second executor call. A deterministic
+/// invariant breach cannot be retried away.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheVerdict {
+    /// Byte-stable prompt (or nothing frozen to verify) — continue.
+    Stable,
+    /// Hash mismatch / missing report on a frozen session — immediate halt.
+    Violated,
+}
+
+pub trait CacheConductor {
+    /// `reported` is the turn's `ExecutionReport::prompt_hash`.
+    fn verify_turn(&self, reported: Option<&Sha256Hex>) -> CacheVerdict;
+}
+
 // ---------------------------------------------------------------------------
 // EchoExecutor (the P1 executor — ponytail)
 // ---------------------------------------------------------------------------
@@ -210,6 +249,10 @@ pub enum EchoMode {
     /// Every node's first attempt returns an empty object (rubric 0.8 → Retry), later
     /// attempts echo properly — the CONCERNS boundary (W3-2 ①) end to end.
     Concerns,
+    /// The node "reads" the named external source (WP-P2a): its output is declared
+    /// external, so the runner marks the output envelope Tainted and every successor
+    /// input inherits the marking (SS-20 transition, end to end).
+    External(&'static str),
 }
 
 pub struct EchoExecutor {
@@ -270,7 +313,18 @@ impl StageExecutor for EchoExecutor {
                 _ => 0.95,
             },
             latency_ms: 0,
+            // The double's identity — the runner used to hardcode this string into
+            // llm.call; the report is now the single source (W6 adapters report their
+            // own, e.g. the FFI bridge's model_ref backing provider).
+            provider: "echo".into(),
             payload,
+            // The echo world has no system prompt and reads nothing external — both
+            // declarations stay None except the External test mode's origin.
+            prompt_hash: None,
+            external_origin: match self.mode {
+                EchoMode::External(origin) => Some(origin.to_string()),
+                _ => None,
+            },
         })
     }
 }
@@ -314,6 +368,9 @@ struct CachedExecution {
     tokens_in: u64,
     tokens_out: u64,
     latency_ms: u64,
+    /// The ORIGIN turn's serving provider — carried so a fork replay's llm.call
+    /// names who actually produced the cached response, not who replayed it.
+    provider: String,
 }
 
 /// What a boundary obtained as its node output: a live report (build the envelope) or a
@@ -346,6 +403,12 @@ impl NodeOutput {
         match self {
             Self::Live(r) => r.confidence,
             Self::Cached(c) => c.confidence,
+        }
+    }
+    fn provider(&self) -> &str {
+        match self {
+            Self::Live(r) => r.provider.as_str(),
+            Self::Cached(c) => c.provider.as_str(),
         }
     }
 }
@@ -471,6 +534,7 @@ pub struct Runner {
     gates: Box<dyn GateConductor>,
     budget: Box<dyn BudgetConductor>,
     router: Box<dyn HandoffRouter>,
+    cache: Box<dyn CacheConductor>,
     sink: Box<dyn EventSink>,
     /// Contract that routed INTO a node — stored with that node's checkpoint and reused
     /// as the boundary contract for its post-gates.
@@ -511,6 +575,7 @@ impl Runner {
         gates: Box<dyn GateConductor>,
         budget_conductor: Box<dyn BudgetConductor>,
         router: Box<dyn HandoffRouter>,
+        cache: Box<dyn CacheConductor>,
         sink: Box<dyn EventSink>,
     ) -> Result<Self, RunnerError> {
         let compiled = DeterministicEngine.compile(plan, seed)?;
@@ -552,6 +617,7 @@ impl Runner {
             gates,
             budget: budget_conductor,
             router,
+            cache,
             sink,
             routed_in: RefCell::new(BTreeMap::new()),
             outputs: RefCell::new(BTreeMap::new()),
@@ -691,6 +757,14 @@ impl Runner {
         let boundary_contract = routed_contract
             .clone()
             .unwrap_or_else(|| synthetic_boundary_contract(node, &stage));
+        // SS-19 grantor: whoever EMITTED the boundary contract holds the authority the
+        // contract's cap may not exceed (roots self-grant via the synthetic contract).
+        // Cloned out of the graph so the borrow never fights route_and_commit's &mut.
+        let grantor: Option<AgentProfile> = self
+            .graph
+            .stages
+            .get(&boundary_contract.from_node)
+            .map(|s| s.profile.clone());
 
         // —— S05/S06 pre-gates: G0 · permission · budget · schema ∪ stage.pre. ——
         let mut pre_refs: BTreeSet<String> = ["G0", "permission", "budget", "schema"]
@@ -717,6 +791,7 @@ impl Runner {
                 attempt: self.attempt_of(node),
                 session_task: &self.graph.task,
                 spawn_token_floor: stage.profile.spawn_token_floor,
+                grantor_profile: grantor.as_ref(),
                 extra: &[],
             });
             self.record_score(&verdict);
@@ -782,13 +857,41 @@ impl Runner {
                 },
             };
 
+            // —— SS-18 cache sentinel: the turn's prompt hash, verified BEFORE the
+            // turn is recorded. A violation halts IMMEDIATELY — the special
+            // no-retry rule (exceptions §4): the session never enters the bounded
+            // retry loop on this failure, and the turn leaves NO llm.call event /
+            // meter row, so the ledger==events invariant (US-20 AC3) survives.
+            if let NodeOutput::Live(report) = &output
+                && let CacheVerdict::Violated = self.cache.verify_turn(report.prompt_hash.as_ref())
+            {
+                // gate_id "cache" is the display-layer key: the guard's
+                // CACHE_GATE_ID and the trace renderer's CACHE_INVARIANT phrase
+                // both derive from this spelling (ui-spec §8.2) — keep them
+                // equal. reason_code stays in the 6-kind registry by contract.
+                self.record_score_value(0.0);
+                self.emit(
+                    EventKind::GateFail,
+                    Some(node.clone()),
+                    EventAttrs::new()
+                        .set("gate_id", "cache")
+                        .set(
+                            "reason_code",
+                            hesmos_core::code_to_static(ReasonCode::GATE_REJECT),
+                        )
+                        .set("score", 0.0),
+                );
+                self.stop_node(node, &stage, wave, "reject");
+                return Ok(NodeEnd::Failed(ReasonCode::GATE_REJECT));
+            }
+
             // —— S08 llm.call + S15 metering. A WARN fires immediately; a SUSPEND
             // waits for the commit boundary (see module doc). ——
             self.emit(
                 EventKind::LlmCall,
                 Some(node.clone()),
                 EventAttrs::new()
-                    .set("provider", "echo")
+                    .set("provider", output.provider())
                     .set("model", stage.profile.model.as_str())
                     .set("tokens_in", output.tokens_in())
                     .set("tokens_out", output.tokens_out())
@@ -807,7 +910,9 @@ impl Runner {
                 .expect("executor confidence clamped into range");
             let out = match &output {
                 NodeOutput::Cached(c) => c.envelope.clone(),
-                NodeOutput::Live(report) => self.build_output_envelope(node, report),
+                NodeOutput::Live(report) => {
+                    self.build_output_envelope(node, report, &input_envelope)
+                }
             };
 
             // —— S11 post-gates: schema · done_criteria · rubric ∪ stage.post. ——
@@ -832,6 +937,7 @@ impl Runner {
                     attempt,
                     session_task: &self.graph.task,
                     spawn_token_floor: stage.profile.spawn_token_floor,
+                    grantor_profile: grantor.as_ref(),
                     extra: &[],
                 });
                 self.record_score(&verdict);
@@ -904,6 +1010,7 @@ impl Runner {
                         attempt,
                         session_task: &self.graph.task,
                         spawn_token_floor: stage.profile.spawn_token_floor,
+                        grantor_profile: grantor.as_ref(),
                         extra: &extra,
                     });
                     self.record_score(&escalated);
@@ -1034,8 +1141,15 @@ impl Runner {
             tokens_in: output.tokens_in(),
             tokens_out: output.tokens_out(),
             latency_ms: output.latency_ms(),
+            provider: output.provider().to_string(),
         };
         self.persist_commit(&receipt, node, &out, cached, routed_contract)?;
+        // The committed envelope is the successor's input source (the field's own
+        // contract — "output envelope per committed node"). WP-P2a caught this write
+        // missing since P1e: the map stayed empty forever, so every node's merged
+        // input silently lost its predecessors' payloads (and their taint). The
+        // taint-chain test fails loudly without this line.
+        self.outputs.borrow_mut().insert(node.clone(), out);
 
         // S15 post-commit budget check — at the commit boundary so the suspend always
         // has a checkpoint to resume from.
@@ -1117,14 +1231,19 @@ impl Runner {
 
     /// The node's input envelope: task + merged predecessor payloads. Roots receive the
     /// task itself as their transfer (G0/schema judge it like any input). Ids derive
-    /// from the wave ordinal — no entropy at the boundary.
+    /// from the wave ordinal — no entropy at the boundary. Taint is the MERGE of the
+    /// predecessor outputs (S5 over a multi-source assembly — `Taint::merge`): any
+    /// Tainted input marks the whole transfer, so contamination cannot be laundered by
+    /// merging.
     fn build_input_envelope(&self, node: &NodeId, stage: &hesmos_core::StageSpec) -> Envelope {
         let ordinal = self.ordinal(node);
         let mut inputs = serde_json::Map::new();
+        let mut pred_taints: Vec<hesmos_core::Taint> = Vec::new();
         if let Some(preds) = self.graph.preds.get(node) {
             let outputs = self.outputs.borrow();
             for pred in preds {
                 if let Some(env) = outputs.get(pred) {
+                    pred_taints.push(env.taint.clone());
                     inputs.insert(
                         pred.to_string(),
                         serde_json::json!({
@@ -1155,11 +1274,22 @@ impl Runner {
                 json: node_input,
             },
             correlation_id: CorrelationId::from_u128(ordinal),
-            taint: hesmos_core::Taint::Clean,
+            taint: hesmos_core::Taint::merge(&pred_taints),
         }
     }
 
-    fn build_output_envelope(&self, node: &NodeId, report: &ExecutionReport) -> Envelope {
+    /// The output envelope: DERIVED from the input envelope through
+    /// [`Envelope::derive`] — the sanctioned derivation path, so input taint flows to
+    /// the output unconditionally (S5). A declared-external output (`ExecutionReport::
+    /// external_origin`, SS-20 rule 1) is then marked via the only sanctioned
+    /// Clean→Tainted path; the assembly can therefore never produce an unmarked
+    /// external envelope.
+    fn build_output_envelope(
+        &self,
+        node: &NodeId,
+        report: &ExecutionReport,
+        input: &Envelope,
+    ) -> Envelope {
         let ordinal = self.ordinal(node);
         // Output envelope `to`: the sole successor when there is exactly one, else the
         // node itself (fan-out destinations resolve per-edge at routing).
@@ -1171,18 +1301,27 @@ impl Runner {
                 .unwrap_or_else(|| node.clone()),
             _ => node.clone(),
         };
-        Envelope {
-            id: EnvelopeId::from_u128(ordinal * 2),
-            from: node.clone(),
+        let mut out = input.derive(
+            EnvelopeId::from_u128(ordinal * 2),
             to,
-            kind: EnvelopeKind::Result,
-            payload: Payload {
+            EnvelopeKind::Result,
+            Payload {
                 schema_id: SchemaId::new("out.v1"),
                 json: report.payload.clone(),
             },
-            correlation_id: CorrelationId::from_u128(ordinal * 2),
-            taint: hesmos_core::Taint::Clean,
+            CorrelationId::from_u128(ordinal * 2),
+        );
+        if let Some(origin) = &report.external_origin {
+            // SS-20 rule 1: a declared-external CLEAN output is the rejected state —
+            // resolve it by marking (the only sanctioned Clean→Tainted path). An
+            // already-Tainted output keeps its first source (first-mark-wins).
+            if hesmos_core::external_import_verdict(true, &out.taint, origin).is_err() {
+                out.mark_tainted(hesmos_core::TaintSource {
+                    origin: origin.clone(),
+                });
+            }
         }
+        out
     }
 
     /// The routed handoff for edge from→to: goal chain from the session task, the
@@ -1606,6 +1745,19 @@ flow: "a -> b; b -> c"
         ))
     }
 
+    /// Cache sentinel stub — `Stable` forever by default, or always `Violated` for
+    /// the SS-18 halt tests (WP-P2a).
+    struct FixedCache(bool);
+    impl CacheConductor for FixedCache {
+        fn verify_turn(&self, _reported: Option<&Sha256Hex>) -> CacheVerdict {
+            if self.0 {
+                CacheVerdict::Violated
+            } else {
+                CacheVerdict::Stable
+            }
+        }
+    }
+
     struct Built {
         runner: Runner,
         sink: SinkHandle,
@@ -1618,6 +1770,27 @@ flow: "a -> b; b -> c"
         name: &str,
         yaml: &str,
         mode: EchoMode,
+        policy: PolicySet,
+        gates: Option<Arc<ScriptedGates>>,
+        budget: Box<dyn BudgetConductor>,
+    ) -> Built {
+        build_with_executor(
+            name,
+            yaml,
+            Box::new(EchoExecutor::new(mode)),
+            policy,
+            gates,
+            budget,
+        )
+    }
+
+    /// The same rig with a CUSTOM executor — the seam a real adapter will occupy, so
+    /// executor-reported facts (provider identity, prompt hash) are provable end to
+    /// end instead of only through the echo double's fixed values.
+    fn build_with_executor(
+        name: &str,
+        yaml: &str,
+        executor: Box<dyn StageExecutor>,
         policy: PolicySet,
         gates: Option<Arc<ScriptedGates>>,
         budget: Box<dyn BudgetConductor>,
@@ -1640,10 +1813,11 @@ flow: "a -> b; b -> c"
             BudgetEnvelope::default(),
             None,
             None,
-            Box::new(EchoExecutor::new(mode)),
+            executor,
             Box::new(gates_handle.expect("gates required")),
             budget,
             accept_router("write the report", policy),
+            Box::new(FixedCache(false)),
             Box::new(sink.clone()),
         )
         .expect("open");
@@ -1878,6 +2052,45 @@ flow: "a -> b; b -> c"
         assert_eq!(stops[0].get_str("stop_kind"), Some("escalate"));
     }
 
+    /// The llm.call `provider` attr is the EXECUTOR's self-report, not a runner
+    /// hardcode: a real adapter's identity (e.g. the FFI bridge's model_ref backing
+    /// provider) must reach the trace verbatim (ml.md §6d decision 16 — "echo" used
+    /// to be hardcoded at the emit site).
+    #[test]
+    fn llm_call_provider_is_the_executor_self_report() {
+        struct BridgeDouble;
+        impl StageExecutor for BridgeDouble {
+            fn execute(&self, req: &StageRequest) -> Result<ExecutionReport, StageFailure> {
+                Ok(ExecutionReport {
+                    payload: serde_json::json!({ "node": req.node.as_str() }),
+                    confidence: 0.9,
+                    tokens_in: 1,
+                    tokens_out: 1,
+                    latency_ms: 0,
+                    provider: "bridge-9".into(),
+                    prompt_hash: None,
+                    external_origin: None,
+                })
+            }
+        }
+        let built = build_with_executor(
+            "provider-report",
+            PLAN_YAML,
+            Box::new(BridgeDouble),
+            PolicySet::default(),
+            Some(ScriptedGates::all_pass()),
+            Box::new(FakeBudget::new(0)),
+        );
+        let outcome = built.runner.run().expect("run");
+        assert_eq!(outcome.final_state, SessionState::Completed);
+
+        let calls = built.sink.0.attrs_of(EventKind::LlmCall);
+        assert!(!calls.is_empty(), "the plan ran at least one LLM turn");
+        for attrs in &calls {
+            assert_eq!(attrs.get_str("provider"), Some("bridge-9"));
+        }
+    }
+
     /// Post-gate Retry then Pass: the boundary counts as CONCERNS exactly once, and
     /// the retry did not duplicate node.start/stop.
     #[test]
@@ -1971,6 +2184,7 @@ flow: "a -> b; b -> c"
             Box::new(GatesHandle(ScriptedGates::all_pass())),
             Box::new(FakeBudget::new(0)),
             accept_router("relay", policy.clone()),
+            Box::new(FixedCache(false)),
             Box::new(sink.clone()),
         )
         .expect("open");
@@ -2087,6 +2301,7 @@ flow: "a -> b; b -> c"
             Box::new(GatesHandle(ScriptedGates::all_pass())),
             Box::new(FakeBudget::new(0)),
             accept_router("write the report", PolicySet::default()),
+            Box::new(FixedCache(false)),
             Box::new(SinkHandle(Arc::new(RecordingSink::new()))),
         )
         .expect("fork open");
@@ -2153,5 +2368,162 @@ flow: "a -> b; b -> c"
         assert_eq!(sid, SessionId::from_u128(u128::from_be_bytes(bytes)));
         // Well-formed ULID string (canonical 26 chars) — it must survive the wire.
         assert_eq!(sid.to_string().len(), 26);
+    }
+
+    // -- WP-P2a: SS-20 taint transitions and the SS-18 cache halt -----------------
+
+    /// Gate conductor that lets every gate pass while capturing each request's
+    /// input-envelope taint — the observation window on what a node's Pre boundary
+    /// actually saw. The captured log is shared (Arc) so the test reads it after the
+    /// runner consumed the conductor.
+    struct TaintProbe(Arc<Mutex<Vec<(String, bool)>>>);
+    impl GateConductor for TaintProbe {
+        fn run_gate(&self, req: GateRun<'_>) -> GateVerdict {
+            let clean = req.envelope_in.map(|e| e.taint.is_clean()).unwrap_or(true);
+            self.0
+                .lock()
+                .expect("lock")
+                .push((format!("{}:{}", req.node.as_str(), req.gate_ref), clean));
+            GateVerdict::Pass { score: 1.0 }
+        }
+    }
+
+    /// AC4 end to end: an External-mode node's output is Tainted, and the successor's
+    /// Pre boundary receives a Tainted input envelope (merge + derive, both assembly
+    /// paths). The clean root's boundary stays Clean — taint only follows data.
+    #[test]
+    fn external_output_marks_taint_through_the_chain() {
+        let root = temp_root("taint-chain");
+        let plan = crate::compile::parse_plan(PLAN_YAML).expect("plan parses");
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let probe = TaintProbe(Arc::clone(&log));
+        let sink = SinkHandle(Arc::new(RecordingSink::new()));
+        let policy = PolicySet::default();
+        let runner = Runner::open(
+            RunnerConfig {
+                root: root.clone(),
+                policy: policy.clone(),
+            },
+            &plan,
+            SessionId::generate(),
+            42,
+            BudgetEnvelope::default(),
+            None,
+            None,
+            Box::new(EchoExecutor::new(EchoMode::External("web.search"))),
+            Box::new(probe) as Box<dyn GateConductor>,
+            Box::new(FakeBudget::new(0)),
+            accept_router("write the report", policy),
+            Box::new(FixedCache(false)),
+            Box::new(sink),
+        )
+        .expect("open");
+
+        let outcome = runner.run().expect("run");
+        assert_eq!(outcome.final_state, SessionState::Completed);
+
+        let seen = log.lock().expect("lock").clone();
+        // research is the root: its Pre input (task only) is Clean...
+        let research_pre = seen
+            .iter()
+            .find(|(k, _)| k == "research:G0")
+            .expect("research pre gate ran");
+        assert!(research_pre.1, "root boundary input must be Clean");
+        // ...draft merges research's Tainted output — its Pre input CANNOT be Clean.
+        let draft_pre = seen
+            .iter()
+            .find(|(k, _)| k == "draft:G0")
+            .expect("draft pre gate ran");
+        assert!(
+            !draft_pre.1,
+            "SS-20: successor input of an external output must be Tainted"
+        );
+    }
+
+    /// Executor double counting calls — the zero-retry assertion's meter. The counter
+    /// rides in an Arc so it survives the runner consuming the executor.
+    struct CountingExecutor {
+        inner: EchoExecutor,
+        calls: std::rc::Rc<std::cell::Cell<usize>>,
+    }
+    impl StageExecutor for CountingExecutor {
+        fn execute(&self, req: &StageRequest) -> Result<ExecutionReport, StageFailure> {
+            self.calls.set(self.calls.get() + 1);
+            self.inner.execute(req)
+        }
+    }
+
+    /// SS-18 + exceptions §4 special row: a cache violation halts IMMEDIATELY —
+    /// FAILED(GATE_REJECT) exit band, the gate_id="cache" violation event recorded,
+    /// the turn void (no llm.call/meter row), and ZERO retries even though the
+    /// bounded-retry budget is far from spent.
+    #[test]
+    fn cache_violation_halts_immediately_without_retry() {
+        let root = temp_root("cache-halt");
+        let plan = crate::compile::parse_plan(PLAN_YAML).expect("plan parses");
+        let sink = SinkHandle(Arc::new(RecordingSink::new()));
+        let policy = PolicySet {
+            bounded_retry: 3,
+            ..PolicySet::default()
+        };
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0usize));
+        let runner = Runner::open(
+            RunnerConfig {
+                root: root.clone(),
+                policy: policy.clone(),
+            },
+            &plan,
+            SessionId::generate(),
+            42,
+            BudgetEnvelope::default(),
+            None,
+            None,
+            Box::new(CountingExecutor {
+                inner: EchoExecutor::new(EchoMode::Echo),
+                calls: std::rc::Rc::clone(&calls),
+            }),
+            Box::new(GatesHandle(ScriptedGates::all_pass())),
+            Box::new(FakeBudget::new(0)),
+            accept_router("write the report", policy),
+            // Frozen session, every turn drifts — the sentinel violates on turn one.
+            Box::new(FixedCache(true)),
+            Box::new(sink.clone()),
+        )
+        .expect("open");
+
+        let outcome = runner.run().expect("run");
+        assert_eq!(outcome.final_state, SessionState::Failed);
+        assert_eq!(outcome.reason, Some(ReasonCode::GATE_REJECT));
+
+        // 재시도 0건: exactly ONE executor call across the whole session — the
+        // bounded-retry loop (budget 3 above) is never entered on this failure.
+        assert_eq!(
+            calls.get(),
+            1,
+            "exceptions §4: no retry after a cache violation"
+        );
+
+        let kinds = sink.0.kinds();
+        assert_eq!(
+            kinds.iter().filter(|k| **k == EventKind::LlmCall).count(),
+            0,
+            "the violating turn is void — no llm.call, no meter row"
+        );
+        let fails = sink.0.attrs_of(EventKind::GateFail);
+        assert_eq!(
+            fails.len(),
+            1,
+            "exactly the cache violation, nothing retried"
+        );
+        assert_eq!(fails[0].get_str("gate_id"), Some("cache"));
+        assert_eq!(fails[0].get_str("reason_code"), Some("GATE_REJECT"));
+        // Immediate halt: the first node started, the second NEVER did, and the
+        // session still closes (FAILED) on the record.
+        assert_eq!(
+            kinds.iter().filter(|k| **k == EventKind::NodeStart).count(),
+            1,
+            "the session stops at the violating node"
+        );
+        assert!(kinds.contains(&EventKind::SessionClose));
     }
 }

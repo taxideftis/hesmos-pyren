@@ -12,8 +12,8 @@ use std::path::Path;
 
 use hesmos_budget::Ledger;
 use hesmos_core::{
-    BudgetEnvelope, CompileError, ErrorClass, EventKind, HesmosError, Plan, PolicySet, SessionId,
-    Sha256Hex, TeamId, canonical_sha256,
+    BathosEngine, BudgetEnvelope, CompileError, ErrorClass, EventKind, HesmosError, Plan,
+    PolicySet, SessionId, Sha256Hex, TeamId, canonical_sha256,
 };
 use hesmos_orchestrator::{
     BathosCli, DeterministicEngine, EchoExecutor, EchoMode, ForkSource, GraphEngine,
@@ -22,7 +22,7 @@ use hesmos_orchestrator::{
 use hesmos_trace::{EventLog, LoadOutcome, SealError, seal};
 
 use crate::composition::{
-    BudgetMeter, GuardGates, GuardValidator, ProgressTee, load_policy, parse_budget_spec,
+    BudgetMeter, CacheSentinel, GuardGates, GuardValidator, load_policy, parse_budget_spec,
     reason_exit, session_paths,
 };
 use crate::exit;
@@ -104,6 +104,25 @@ pub(crate) fn platform_error(message: String, session: Option<SessionId>) -> i32
     exit::EXIT_EVIDENCE_INVALID
 }
 
+/// bathos's model-registry verdict refused the session open (ml.md §6d decision 15):
+/// class Bathos + the bathos code VERBATIM (observed: E-MODEL-MIX), exit 3 — the
+/// pre-execution refusal band, so a refused open leaves no artifacts (CE-* rule).
+fn model_refused(code: &str, session: Option<SessionId>) -> i32 {
+    let mut err = HesmosError {
+        class: ErrorClass::Bathos,
+        code: code.to_string(),
+        session_id: None,
+        node_id: None,
+        message: messages::model_refused(code),
+        hint: None,
+    };
+    if let Some(s) = session {
+        err = err.with_session(s);
+    }
+    emit_error(&err);
+    exit::EXIT_COMPILE
+}
+
 /// Reads and parses the plan WITHOUT creating anything — CE-* must leave no session
 /// behind (US-04 AC2). Unreadable file is a bad invocation (exit 2); unreadable
 /// CONTENT is a compile error (exit 3).
@@ -152,6 +171,7 @@ pub fn execute(args: RunArgs, root: &Path) -> i32 {
     run_session(
         root, &style, plan, session_id, args.seed, budget, team_id, None,
     )
+    .0
 }
 
 /// `--dry-run`: compile + wave schedule only. No session, no events, no WAL, no
@@ -219,8 +239,115 @@ fn echo_mode() -> Result<EchoMode, String> {
     }
 }
 
+/// Composes the session artifacts and the runner — everything from env discipline to
+/// `Runner::open`, but NOT the run loop. Shared by `run`, `trace replay` and `eval`
+/// so all three drive the SAME adapters and the same guards; the `sink_builder`
+/// decides the stdout face (`progress_sink` for run/replay, `LogOnlyTee` for eval —
+/// eval's stdout belongs to the suite report).
+///
+/// Returns only a runner or an exit code: every failure here is a CLI-band error
+/// (usage/compile/platform) and no outcome exists yet.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn open_session_runner(
+    root: &Path,
+    plan: &Plan,
+    session_id: SessionId,
+    seed: u64,
+    budget: &BudgetEnvelope,
+    team_id: Option<TeamId>,
+    fork: Option<ForkSource>,
+    sink_builder: impl FnOnce(EventLog) -> Box<dyn hesmos_core::EventSink>,
+) -> Result<Runner, i32> {
+    let mode = echo_mode().map_err(usage_error)?;
+    let policy: PolicySet = load_policy().map_err(usage_error)?;
+
+    let (session_dir, _, checkpoint_db) = session_paths(root, &session_id);
+    if session_dir.exists() {
+        return Err(usage_error(format!(
+            "세션 디렉터리가 이미 존재합니다: {} — 동일 세션 ID 재실행은 금지됩니다 (USAGE-STATE)",
+            session_dir.display()
+        )));
+    }
+
+    // CE-03 probe (fork/eval plans come from snapshots, still worth the same
+    // no-artifact guarantee): compile BEFORE the EventLog creates the session dir.
+    if let Err(e) = DeterministicEngine.compile(plan, seed) {
+        return Err(compile_error(&e));
+    }
+
+    // PORT-2 model validate (ml.md §6d decision 15 — FFI parity): the compile probe
+    // proved the plan's SHAPE; bathos now proves its MODELS, still before any
+    // artifact exists so a refusal leaves no session behind (CE-* guarantee).
+    // A bathos verdict passes through verbatim (exceptions.md §5): its `code` rides
+    // the Bathos base class un-renamed. A missing/unspawnable bathos proceeds
+    // UNVERIFIED — the seal's exit-127 rule: substituting our own judgment would be
+    // reimplementing the registry. The seal-time 보류 note is where absence becomes
+    // visible, so this stays silent (eval's stdout belongs to its report anyway).
+    let engine = BathosCli::new(std::env::var("HESMOS_BATHOS").unwrap_or_else(|_| "bathos".into()))
+        .with_cwd(root);
+    match engine.model_validate() {
+        Ok(report) if !report.ok => {
+            let code = report
+                .raw
+                .0
+                .get("code")
+                .and_then(|c| c.as_str())
+                .unwrap_or("E-MODEL-MIX")
+                .to_string();
+            return Err(model_refused(&code, Some(session_id)));
+        }
+        Ok(_) => {}
+        Err(_) => {}
+    }
+
+    // ONE EventLog handle per session (P0b single-writer discipline) — the tee moves
+    // it into the runner; the seal reopens only after the runner (and tee) are dropped.
+    let log = match EventLog::open(root, &session_id) {
+        Ok(l) => l,
+        Err(e) => {
+            return Err(platform_error(
+                format!("trace log open 실패: {e}"),
+                Some(session_id),
+            ));
+        }
+    };
+    let meter = match BudgetMeter::open(&session_id, &checkpoint_db, budget, team_id.as_ref()) {
+        Ok(m) => m,
+        Err(e) => {
+            return Err(platform_error(
+                format!("ledger open 실패: {e}"),
+                Some(session_id),
+            ));
+        }
+    };
+
+    Runner::open(
+        RunnerConfig {
+            root: root.to_path_buf(),
+            policy: policy.clone(),
+        },
+        plan,
+        session_id,
+        seed,
+        budget.clone(),
+        team_id,
+        fork,
+        Box::new(EchoExecutor::new(mode)),
+        Box::new(GuardGates::new()),
+        Box::new(meter),
+        Box::new(LoopGuardRouter::new(&plan.task, GuardValidator, policy)),
+        // W5 freezes no system prompt (see CacheSentinel) — the sentinel is inert
+        // until WP-P2d's prompt builder supplies the SS-04 hash.
+        Box::new(CacheSentinel { frozen: None }),
+        sink_builder(log),
+    )
+    .map_err(|e| runner_error(e, session_id))
+}
+
 /// Composes and runs ONE session end-to-end (S01..S17): adapters → runner → seal →
-/// summary → exit band. Shared by `run` (fresh id) and `trace replay` (derived fork id).
+/// summary → exit band. Shared by `run` (fresh id) and `trace replay` (derived fork
+/// id). Returns the exit band AND the outcome (when the run loop executed) — replay
+/// needs the outcome for its reproduction summary; `run` ignores it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_session(
     root: &Path,
@@ -231,63 +358,23 @@ pub(crate) fn run_session(
     budget: BudgetEnvelope,
     team_id: Option<TeamId>,
     fork: Option<ForkSource>,
-) -> i32 {
+) -> (i32, Option<RunOutcome>) {
     // Seed before anything prints: the banner shows the recorded value (CLI-1 — the
     // recorded seed becomes a reproduction input).
     let seed = seed.unwrap_or_else(random_seed);
-    let mode = match echo_mode() {
-        Ok(m) => m,
-        Err(msg) => return usage_error(msg),
-    };
-    let policy: PolicySet = match load_policy() {
-        Ok(p) => p,
-        Err(msg) => return usage_error(msg),
-    };
 
-    let (session_dir, _, checkpoint_db) = session_paths(root, &session_id);
-    if session_dir.exists() {
-        return usage_error(format!(
-            "세션 디렉터리가 이미 존재합니다: {} — 동일 세션 ID 재실행은 금지됩니다 (USAGE-STATE)",
-            session_dir.display()
-        ));
-    }
-
-    // CE-03 probe again (fork plans come from the snapshot, still worth the same
-    // no-artifact guarantee): compile BEFORE the EventLog creates the session dir.
-    if let Err(e) = DeterministicEngine.compile(&plan, seed) {
-        return compile_error(&e);
-    }
-
-    // ONE EventLog handle per session (P0b single-writer discipline) — the tee moves
-    // it into the runner; the seal reopens only after the runner (and tee) are dropped.
-    let log = match EventLog::open(root, &session_id) {
-        Ok(l) => l,
-        Err(e) => return platform_error(format!("trace log open 실패: {e}"), Some(session_id)),
-    };
-    let meter = match BudgetMeter::open(&session_id, &checkpoint_db, &budget, team_id.as_ref()) {
-        Ok(m) => m,
-        Err(e) => return platform_error(format!("ledger open 실패: {e}"), Some(session_id)),
-    };
-
-    let runner = match Runner::open(
-        RunnerConfig {
-            root: root.to_path_buf(),
-            policy: policy.clone(),
-        },
+    let runner = match open_session_runner(
+        root,
         &plan,
         session_id,
         seed,
-        budget.clone(),
+        &budget,
         team_id,
         fork,
-        Box::new(EchoExecutor::new(mode)),
-        Box::new(GuardGates::new()),
-        Box::new(meter),
-        Box::new(LoopGuardRouter::new(&plan.task, GuardValidator, policy)),
-        Box::new(ProgressTee { log, style: *style }),
+        |log| crate::composition::progress_sink(log, *style),
     ) {
         Ok(r) => r,
-        Err(e) => return runner_error(e, session_id),
+        Err(code) => return (code, None),
     };
 
     // SIGINT → cooperative suspend (ST-1: RUNNING —SIGINT→ SUSPENDED, exit 130). The
@@ -321,10 +408,11 @@ pub(crate) fn run_session(
 
     let outcome = match runner.run() {
         Ok(o) => o,
-        Err(e) => return runner_error(e, session_id),
+        Err(e) => return (runner_error(e, session_id), None),
     };
 
-    close_session(root, style, &outcome, session_id, &plan_hash)
+    let code = close_session(root, style, &outcome, session_id, &plan_hash);
+    (code, Some(outcome))
 }
 
 /// S16: seal a COMPLETED session and render the exit summary (§3.5). Every terminal
@@ -570,6 +658,40 @@ fn random_seed() -> u64 {
     std::collections::hash_map::RandomState::new()
         .build_hasher()
         .finish()
+}
+
+/// Fork regeneration guard, shared by `trace replay` (CLI-3) and `hesmos eval`
+/// (CLI-5). `derive_fork_session_id` is DETERMINISTIC, so re-running the same
+/// replay/eval case lands on an existing fork dir. When the occupant IS this fork
+/// (WAL lineage == this origin at this commit) it is a stale reproduction result
+/// and is removed for regeneration (`Ok(true)`); any other occupant — or a dir
+/// without a verifiable WAL row — refuses (`Err`: USAGE-STATE). Arbitrary same-id
+/// re-runs stay banned, and no lineage means no permission to overwrite.
+pub(crate) fn clear_stale_fork(
+    root: &Path,
+    origin: &SessionId,
+    fork_session: &SessionId,
+    at: hesmos_core::CommitSeq,
+) -> Result<bool, i32> {
+    let (fork_dir, _, fork_db) = session_paths(root, fork_session);
+    if !fork_dir.exists() {
+        return Ok(false);
+    }
+    let lineage_ok = hesmos_orchestrator::SessionWal::open(&fork_db)
+        .ok()
+        .and_then(|w| w.session_row(fork_session).ok().flatten())
+        .and_then(|r| r.fork_of)
+        .and_then(|f| hesmos_orchestrator::parse_fork_of(&f))
+        .is_some_and(|(o, a)| o == *origin && a == at);
+    if !lineage_ok {
+        return Err(usage_error(format!(
+            "세션 디렉터리가 이미 존재합니다: {} — fork ID가 계보 불명의 세션과 충돌합니다 (USAGE-STATE)",
+            fork_dir.display()
+        )));
+    }
+    std::fs::remove_dir_all(&fork_dir)
+        .map_err(|e| platform_error(format!("fork 재생성 실패: {e}"), Some(*fork_session)))?;
+    Ok(true)
 }
 
 /// Builds a fork plan for `trace replay`: load the origin's compiled-plan snapshot,

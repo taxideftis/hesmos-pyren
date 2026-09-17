@@ -18,6 +18,11 @@ pub const EXIT_HALTED_LOOP: i32 = 11;
 pub const EXIT_HALTED_ABORTED: i32 = 12;
 /// Final GATE_REJECT → session FAILED. Never reused for halts.
 pub const EXIT_FAILED: i32 = 20;
+/// CLI-5 golden regression (SS-22 rule 1 / S8): the FAILED band's number, carrying
+/// eval's own verdict — "a blessed structure no longer reproduces". Sharing 20 is
+/// the design (both mean "the run failed its gate"); the named alias keeps eval's
+/// call sites self-documenting.
+pub const EXIT_EVAL_REGRESSION: i32 = EXIT_FAILED;
 /// audit_verify failed after seal → session evidence-invalid (SS-03 rule 2).
 pub const EXIT_EVIDENCE_INVALID: i32 = 30;
 /// SIGINT-forwarded cancellation.

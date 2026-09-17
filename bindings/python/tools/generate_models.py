@@ -330,6 +330,31 @@ def generate() -> str:
             ("tokens_out", "u64"),
             ("provider_meta", "EventAttrs"),
         ],
+        # PY-5 core.run result: session_id is the first-class field, trace_id the §6.3
+        # alias (values always identical); waves is populated ONLY for dry_run receipts
+        # (schedule of node-id lists, one inner list per topological wave).
+        "RunReceipt": [
+            ("session_id", "SessionId"),
+            ("trace_id", "SessionId"),
+            ("final_state", "str"),
+            ("reason", "Option<ReasonCode>"),
+            ("commits", "u64"),
+            ("chain_head", "Option<Sha256Hex>"),
+            ("dry_run", "bool"),
+            ("waves", "Option<Vec<Vec<str>>>"),
+        ],
+        # FFI-1 budget_status return — the core BudgetState snapshot (TRAIT-3 shape).
+        # None limit = no cap on that line (cannot fire); Some(0) blocks from the first
+        # token — the distinction is semantic (WP-P1d).
+        "BudgetState": [
+            ("session_spent", "u64"),
+            ("session_warn_limit", "Option<u64>"),
+            ("session_suspend_limit", "Option<u64>"),
+            ("team_spent", "u64"),
+            ("team_suspend_limit", "Option<u64>"),
+            ("agent_spent", "u64"),
+            ("agent_suspend_limit", "Option<u64>"),
+        ],
     }.items():
         PROSE_STRUCTS[prose_name] = prose_fields
         KNOWN_NAMES.add(prose_name)

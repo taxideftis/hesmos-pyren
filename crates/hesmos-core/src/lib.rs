@@ -10,6 +10,7 @@
 //! - collections are BTree-based; do not enable serde_json's `preserve_order`.
 //! - identifiers are newtypes; raw String/u64 never cross a boundary.
 
+mod budget_state;
 mod contract;
 mod envelope;
 mod error;
@@ -23,13 +24,15 @@ mod trace_event;
 
 // D-7: the public surface is the re-export list below; the modules themselves are private.
 
+pub use budget_state::BudgetState;
 pub use contract::{
-    ArtifactRef, Assumption, Confidence, ContractBody, DoneCriteria, FailedApproach,
-    HandoffContract, KnowledgeEntry, PermissionCap, SnapshotSlice,
+    ArtifactRef, Assumption, Confidence, ContractBody, ContractJudgment, DoneCriteria,
+    FailedApproach, HandoffContract, KnowledgeEntry, PermissionCap, SnapshotSlice,
 };
 pub use envelope::{Envelope, EnvelopeKind, Payload, Taint, TaintSource};
 pub use error::{
     CompileError, ErrorClass, GateVerdict, HesmosError, ReasonCode, RouteDecision, SchemaError,
+    code_to_static,
 };
 pub use ids::{
     AgentRole, CommitSeq, CorrelationId, EnvelopeId, ModelRef, NodeId, RunId, SchemaId, SessionId,
@@ -41,7 +44,7 @@ pub use plan::{
 };
 pub use platform::{
     AuditPayload, BathosEngine, GateRecord, GateRecordId, GateReport, ModelReport, PlatformError,
-    StateReport, VerifyReport, WaveRef, WaveReport,
+    RawReport, StateReport, VerifyReport, WaveRef, WaveReport,
 };
 pub use policy::{PolicyOverrides, PolicySet};
 pub use session::{SessionHandle, SessionState};

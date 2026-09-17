@@ -4,10 +4,32 @@ version.workspace = true
 edition.workspace = true
 description = "Agent Hesmos CLI — run/trace/budget/eval (+serve behind the `serve` feature)"
 
+# Lib + bin split: the library holds the CLI contracts' implementations (dispatch
+# functions, message catalog, exit map, composition-root adapters) so the E2E harness
+# (tests/integration_rust) can drive them in-process; the binary is a thin parse+exit
+# shell over `hesmos::cmd`.
+[lib]
+name = "hesmos"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hesmos"
+path = "src/main.rs"
+
 [dependencies]
-# CLI skeleton dependency (WP-P0a); clap is the only hard dep until WP-P1e fills the
-# commands. No invented flags here — flag surfaces arrive with their CLI-1..5 contracts.
+# CLI parsing (WP-P0a surface; flags land with their CLI-1..5 contracts).
 clap.workspace = true
+# Composition root (WP-P1e): the adapters below wire guard/budget/trace into the
+# orchestrator's seam traits — this is the ONLY place sibling crates meet the runner.
+hesmos-core = { path = "../crates/hesmos-core" }
+hesmos-orchestrator = { path = "../crates/hesmos-orchestrator" }
+hesmos-guard = { path = "../crates/hesmos-guard" }
+hesmos-budget = { path = "../crates/hesmos-budget" }
+hesmos-trace = { path = "../crates/hesmos-trace" }
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+# Cooperative SIGINT (CLI-1 exit 130): flips the runner's shared interrupt flag.
+ctrlc.workspace = true
 
 # SS-24/P8: the serve command maps onto the gateway's public API only (D-4). The
 # dependency is optional so the default build carries no HTTP stack.

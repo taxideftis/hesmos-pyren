@@ -18,49 +18,13 @@
 //! - This crate judges; it never executes retries or gates (WP-P1c) and never writes
 //!   events (P6). [`ContractJudgment`] is the data a router / runner acts on.
 
-use serde::{Deserialize, Serialize};
-
-use hesmos_core::HandoffContract;
-
-/// Matrix judgments as a closed enum — variant names mirror the matrix spellings
-/// (`snake_case` serde renames keep event/audit strings identical to the contract doc).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ContractJudgment {
-    /// All 8 body fields present and consistent — the next node may start (the router
-    /// still applies its own loop guards afterwards, TRAIT-4 step 2).
-    Accept,
-    /// Matrix `reject` — contract returns to its sender; the next node never starts
-    /// (SS-06 rule 6). `field` names the offending matrix row.
-    Reject { field: &'static str, detail: String },
-    /// Matrix `reject_no_retry` — done_criteria absent/empty. There is nothing to
-    /// re-check against, so the retry path cannot exist (ADR-0002 강제조항).
-    RejectNoRetry { field: &'static str },
-    /// Matrix `post_gate_fail` — artifacts absent. The stage may run, but its output is
-    /// handled as a post-gate failure instead of a normal completion.
-    PostGateFail { field: &'static str },
-    /// Matrix `warn_proceed` — failed_approaches absent (recommended field; forcing it
-    /// would make first-ever tasks unrunnable, §5.3).
-    WarnProceed { field: &'static str },
-    /// Matrix `bounded_retry` — confidence below the floor; reuses the shared
-    /// bounded-retry path, no separate loop (SS-10 rule 3). Executed by WP-P1c.
-    BoundedRetry,
-}
-
-impl ContractJudgment {
-    /// `true` when the contract did NOT pass validation (no next-node start).
-    pub fn is_rejection(&self) -> bool {
-        matches!(
-            self,
-            ContractJudgment::Reject { .. }
-                | ContractJudgment::RejectNoRetry { .. }
-                | ContractJudgment::BoundedRetry
-        )
-    }
-}
+use hesmos_core::{ContractJudgment, HandoffContract};
 
 /// Validates one contract against the session's original task text and the
 /// confidence floor (the bounded-retry threshold — planner-supplied, P1c executes).
+///
+/// [`ContractJudgment`] itself lives in core (shared with the orchestrator's router via
+/// the D-2 seam); this module owns only the judging logic.
 pub fn validate(
     contract: &HandoffContract,
     session_task: &str,

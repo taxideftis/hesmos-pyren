@@ -70,6 +70,28 @@ impl BudgetEngine {
         &self.budget
     }
 
+    /// The core [`BudgetState`] snapshot the runner carries into pre-gate `GateCtx`
+    /// (TRAIT-3). Limits are recomputed from the frozen envelope on every call — the
+    /// snapshot is a value, so gates can never observe ledger mutations mid-check.
+    pub fn budget_state(
+        &self,
+        session_spent: u64,
+        team_spent: u64,
+        agent_role: &AgentRole,
+        agent_spent: u64,
+    ) -> hesmos_core::BudgetState {
+        let (_, agent_suspend) = self.budget.agent_limits(agent_role);
+        hesmos_core::BudgetState {
+            session_spent,
+            session_warn_limit: self.budget.session_warn_limit(),
+            session_suspend_limit: self.budget.session_suspend_limit(),
+            team_spent,
+            team_suspend_limit: self.budget.team_suspend_limit(),
+            agent_spent,
+            agent_suspend_limit: agent_suspend,
+        }
+    }
+
     /// Evaluates all three scopes. Severity: Exceeded (any scope) > Warn (first
     /// unfired crossing; scopes checked session → team → agent, a fixed order) > Clear.
     ///
@@ -83,63 +105,66 @@ impl BudgetEngine {
         agent_spent: u64,
     ) -> ThresholdVerdict {
         // —— suspend lines: any scope at/over 100% blocks everything (pre-block). ——
-        if let Some(limit) = self.budget.session_suspend_limit() {
-            if session_spent >= limit {
-                return ThresholdVerdict::Exceeded {
-                    scope: Scope::Session,
-                };
-            }
+        if let Some(limit) = self.budget.session_suspend_limit()
+            && session_spent >= limit
+        {
+            return ThresholdVerdict::Exceeded {
+                scope: Scope::Session,
+            };
         }
-        if let Some(limit) = self.budget.team_suspend_limit() {
-            if team_spent >= limit {
-                return ThresholdVerdict::Exceeded { scope: Scope::Team };
-            }
+        if let Some(limit) = self.budget.team_suspend_limit()
+            && team_spent >= limit
+        {
+            return ThresholdVerdict::Exceeded { scope: Scope::Team };
         }
         let (agent_warn, agent_suspend) = self.budget.agent_limits(agent_role);
-        if let Some(limit) = agent_suspend {
-            if agent_spent >= limit {
-                return ThresholdVerdict::Exceeded {
-                    scope: Scope::Agent,
-                };
-            }
+        if let Some(limit) = agent_suspend
+            && agent_spent >= limit
+        {
+            return ThresholdVerdict::Exceeded {
+                scope: Scope::Agent,
+            };
         }
 
         // —— warn lines: fire once per scope on the crossing. ——
-        if let Some(limit) = self.budget.session_warn_limit() {
-            if session_spent >= limit && !self.warn_fired.contains(&Scope::Session) {
-                self.warn_fired.insert(Scope::Session);
-                return ThresholdVerdict::Warn {
-                    scope: Scope::Session,
-                    spent: session_spent,
-                    remaining: self
-                        .budget
-                        .session_suspend_limit()
-                        .map(|s| s.saturating_sub(session_spent)),
-                };
-            }
+        if let Some(limit) = self.budget.session_warn_limit()
+            && session_spent >= limit
+            && !self.warn_fired.contains(&Scope::Session)
+        {
+            self.warn_fired.insert(Scope::Session);
+            return ThresholdVerdict::Warn {
+                scope: Scope::Session,
+                spent: session_spent,
+                remaining: self
+                    .budget
+                    .session_suspend_limit()
+                    .map(|s| s.saturating_sub(session_spent)),
+            };
         }
-        if let Some(limit) = self.budget.team_warn_limit() {
-            if team_spent >= limit && !self.warn_fired.contains(&Scope::Team) {
-                self.warn_fired.insert(Scope::Team);
-                return ThresholdVerdict::Warn {
-                    scope: Scope::Team,
-                    spent: team_spent,
-                    remaining: self
-                        .budget
-                        .team_suspend_limit()
-                        .map(|s| s.saturating_sub(team_spent)),
-                };
-            }
+        if let Some(limit) = self.budget.team_warn_limit()
+            && team_spent >= limit
+            && !self.warn_fired.contains(&Scope::Team)
+        {
+            self.warn_fired.insert(Scope::Team);
+            return ThresholdVerdict::Warn {
+                scope: Scope::Team,
+                spent: team_spent,
+                remaining: self
+                    .budget
+                    .team_suspend_limit()
+                    .map(|s| s.saturating_sub(team_spent)),
+            };
         }
-        if let Some(limit) = agent_warn {
-            if agent_spent >= limit && !self.warn_fired.contains(&Scope::Agent) {
-                self.warn_fired.insert(Scope::Agent);
-                return ThresholdVerdict::Warn {
-                    scope: Scope::Agent,
-                    spent: agent_spent,
-                    remaining: agent_suspend.map(|s| s.saturating_sub(agent_spent)),
-                };
-            }
+        if let Some(limit) = agent_warn
+            && agent_spent >= limit
+            && !self.warn_fired.contains(&Scope::Agent)
+        {
+            self.warn_fired.insert(Scope::Agent);
+            return ThresholdVerdict::Warn {
+                scope: Scope::Agent,
+                spent: agent_spent,
+                remaining: agent_suspend.map(|s| s.saturating_sub(agent_spent)),
+            };
         }
 
         ThresholdVerdict::Clear
@@ -292,6 +317,36 @@ mod tests {
             v2,
             ThresholdVerdict::Clear,
             "second look is Clear — warn already fired"
+        );
+    }
+
+    /// The GateCtx snapshot bridge (WP-P1c): limits come from the frozen envelope,
+    /// spends from the caller — and an uncapped line stays None (cannot fire).
+    #[test]
+    fn budget_state_snapshot_carries_envelope_limits() {
+        let mut env = BudgetEnvelope {
+            session_max_tokens: Some(250_000),
+            team_max_tokens: None,
+            agent_max_tokens: Default::default(),
+            warn_pct: 80,
+            suspend_pct: 100,
+        };
+        env.agent_max_tokens
+            .insert(AgentRole::new("writer"), 10_000);
+        let e = BudgetEngine::new(SessionBudget::freeze(env, SessionId::from_u128(1), None));
+
+        let snap = e.budget_state(200_000, 5_000, &AgentRole::new("writer"), 9_000);
+        assert_eq!(snap.session_warn_limit, Some(200_000));
+        assert_eq!(snap.session_suspend_limit, Some(250_000));
+        assert_eq!(snap.team_suspend_limit, None, "uncapped team stays None");
+        assert_eq!(snap.agent_suspend_limit, Some(10_000));
+        assert!(!snap.suspend_reached());
+        assert!(snap.session_warn_reached());
+
+        let snap = e.budget_state(200_000, 5_000, &AgentRole::new("writer"), 10_000);
+        assert!(
+            snap.suspend_reached(),
+            "agent cap trip visible in the snapshot"
         );
     }
 }

@@ -1,0 +1,15 @@
+[package]
+name = "hesmos-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+ulid.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# Plan YAML surface test (TYPE-6 example must keep parsing).
+serde_yaml_ng.workspace = true

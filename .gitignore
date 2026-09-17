@@ -1,0 +1,21 @@
+# Rust build artifacts
+target/
+
+# Python build/test artifacts
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.venv/
+*.egg-info/
+dist/
+htmlcov/
+
+# BATHOS process scaffolding (kept local, not part of the product repo)
+.agent-team/
+.claude/
+modules/
+assets/
+
+# OS / editor noise
+.DS_Store

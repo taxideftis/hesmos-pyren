@@ -1,0 +1,11 @@
+[package]
+name = "hesmos-budget"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# D-2: core is the only internal dependency — no sibling-crate deps, ever.
+hesmos-core = { path = "../hesmos-core" }
+# Ledger storage (story §6): bundled SQLite pins the engine; single connection per DB.
+rusqlite.workspace = true
+thiserror.workspace = true

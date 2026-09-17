@@ -2,7 +2,7 @@
 
 <img src="docs/img/hesmos-lockup-wide.png" alt="hesmos" width="560">
 
-### Ἀσμός — Greek for *swarm*
+### Ἀσμός — Greek for *the moment a hive takes flight*
 
 **An auditable control plane for multi-agent work.**
 
@@ -27,7 +27,7 @@ Most multi-agent frameworks sell you freedom and bill you in evidence: the same 
 - An **append-only event log** with a SHA-256 hash chain turns every session into tamper-evident evidence, replayable to any step.
 - A **first-class CLI** and an optional **query-only gateway** expose the same vocabulary everywhere: `PASS / CONCERNS / FAIL`, `→ commit #N`, `‖ SUSPENDED — replay --at`.
 
-> **Ἀσμός** is Greek for *swarm*. The name is the promise: many agents, one audit trail.
+> **Ἀσμός** is Greek for *the moment a hive takes flight*. The name is the promise: many agents, one audit trail.
 
 ---
 
@@ -207,7 +207,7 @@ feat/*                 ← all work happens here, branched from develop
 
 <div align="center">
   <img src="docs/img/hesmos-logo-stack.png" alt="hesmos stacked logo" width="220">
-  <p><em>Ἀσμός — Greek for swarm.</em></p>
+  <p><em>Ἀσμός — Greek for the moment a hive takes flight.</em></p>
 </div>
 
 <details>

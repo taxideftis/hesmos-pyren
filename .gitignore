@@ -19,3 +19,6 @@ assets/
 
 # OS / editor noise
 .DS_Store
+
+# Local brand asset source (committed copies live in docs/img/)
+git-asset/

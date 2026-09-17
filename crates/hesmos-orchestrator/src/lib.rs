@@ -27,9 +27,9 @@ pub use router::{
     ContractValidator, HandoffRouter, LoopGuardRouter, LoopGuardState, LoopGuardVerdict,
 };
 pub use runner::{
-    BudgetConductor, EchoExecutor, EchoMode, ExecutionReport, ForkSource, GateConductor, GateRun,
-    MeterKind, RunOutcome, Runner, RunnerConfig, RunnerError, RunnerPhase, SpendVerdict,
-    StageExecutor, StageFailure, StageRequest, derive_fork_session_id,
+    BudgetConductor, CacheConductor, CacheVerdict, EchoExecutor, EchoMode, ExecutionReport,
+    ForkSource, GateConductor, GateRun, MeterKind, RunOutcome, Runner, RunnerConfig, RunnerError,
+    RunnerPhase, SpendVerdict, StageExecutor, StageFailure, StageRequest, derive_fork_session_id,
 };
 pub use wal::{
     SessionRow, SessionWal, StoredCommit, WalError, parse_fork_of, parse_run_id, parse_session_id,

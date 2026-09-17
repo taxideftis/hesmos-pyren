@@ -533,6 +533,7 @@ fn t11_seal_joins_bathos_audit_and_tamper_is_detected() {
              \x20 exit 0\n\
              fi\n\
              if [ \"$1 $2\" = \"audit verify\" ]; then echo '{{\"ok\":true}}'; exit 0; fi\n\
+             if [ \"$1 $2\" = \"model validate\" ]; then echo '{{\"ok\":true}}'; exit 0; fi\n\
              exit 3\n",
             ledger_path = ledger_path
         ),
@@ -588,7 +589,13 @@ fn t11_seal_joins_bathos_audit_and_tamper_is_detected() {
     // A bathos that REJECTS verify fails the seal: run exits 30, and the close
     // events carry no seal (never "sealed anyway" on a failed verify).
     let failing = root.0.join("bathos-stub-failing");
-    std::fs::write(&failing, "#!/bin/bash\necho '{\"ok\":false}'\nexit 1\n").expect("write");
+    // This stub fails ONLY the audit verify — `model validate` passes, so the run
+    // opens and reaches the seal (the failure under test is the evidence join).
+    std::fs::write(
+        &failing,
+        "#!/bin/bash\nif [ \"$1 $2\" = \"model validate\" ]; then echo '{\"ok\":true}'; exit 0; fi\necho '{\"ok\":false}'\nexit 1\n",
+    )
+    .expect("write");
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -618,6 +625,43 @@ fn t11_seal_joins_bathos_audit_and_tamper_is_detected() {
             .get_str("final_state"),
         Some("COMPLETED"),
         "the session itself completed — only the EVIDENCE join failed"
+    );
+}
+
+/// PORT-2 model validate (ml.md §6d decision 15, CLI half): a bathos ok=false
+/// verdict refuses the session BEFORE any artifact exists — exit is the
+/// pre-execution band 3, the same no-artifact guarantee the CE-* probes give. The
+/// E-line itself (class "bathos", the bathos `code` verbatim) goes to stderr, which
+/// in-process assertions cannot capture — its shape is pinned by the emit path and
+/// observed in the T11 stub-coverage failure output. The spawn-failure → proceed-
+/// unverified arm is what every OTHER test here exercises (no bathos configured).
+#[test]
+fn t11_model_validate_refusal_leaves_no_artifacts() {
+    let _env = env_lock();
+    clean_env();
+    let root = TempRoot::new("t11-model-refuse");
+    let refusing = root.0.join("bathos-stub-refusing");
+    std::fs::write(
+        &refusing,
+        // Query convention (platform.rs): the VERDICT rides the exit code — a failed
+        // validation is a non-zero exit with the verdict body on stdout.
+        "#!/bin/bash\nif [ \"$1 $2\" = \"model validate\" ]; then echo '{\"ok\":false,\"code\":\"E-MODEL-MIX\"}'; exit 1; fi\nexit 0\n",
+    )
+    .expect("write stub");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&refusing, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+    set_env("HESMOS_BATHOS", &refusing.display().to_string());
+
+    let plan = root.write_plan(PLAN);
+    let code = cmd::run::execute(run_args(&plan, 7, "tokens=100000"), &root.0);
+    clear_env("HESMOS_BATHOS");
+    assert_eq!(code, 3, "a refused open is the pre-execution band");
+    assert!(
+        !root.sessions_root().exists(),
+        "a model-refused open leaves no session artifacts"
     );
 }
 

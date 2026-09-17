@@ -1,6 +1,7 @@
 # hesmos-ffi — PyO3 boundary crate (FFI-1 surface, Stephen single owner per boundary rule 2).
-# Marshaling only (D-3): no business logic, no schema redefinition — core schema types are
-# consumed at WP-P2b (session run E2E); P0c keeps the surface self-contained.
+# P2b: the surface now hosts its own composition root (D-7 — binary crates cannot be
+# depended on, so hesmos/src/composition.rs cannot be reused; this module re-implements
+# the adapters over the same workspace crates, ~40 lines each, no new logic).
 [package]
 name = "hesmos-ffi"
 version.workspace = true
@@ -20,3 +21,11 @@ pyo3 = "0.28"
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
 ulid.workspace = true
+# Ladder rung 2 (reuse of existing workspace crates — no new external deps): the
+# session_run path composes the same machinery the CLI composes. Internal crates use
+# path deps (workspace convention — no [workspace.dependencies] entries for members).
+hesmos-core = { path = "../hesmos-core" }
+hesmos-orchestrator = { path = "../hesmos-orchestrator" }
+hesmos-guard = { path = "../hesmos-guard" }
+hesmos-budget = { path = "../hesmos-budget" }
+hesmos-trace = { path = "../hesmos-trace" }

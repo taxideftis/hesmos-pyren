@@ -75,6 +75,27 @@ class LlmReply(BaseModel):
     tokens_out: int
     provider_meta: dict[str, Any]
 
+class RunReceipt(BaseModel):
+    model_config = _FROZEN
+    session_id: SessionId
+    trace_id: SessionId
+    final_state: str
+    reason: Literal["MAX_HANDOFFS", "TIMEOUT", "REPETITIVE_HANDOFF", "BUDGET_EXCEEDED", "GATE_REJECT", "PROVIDER_FAILURE"] | None = None
+    commits: int
+    chain_head: Sha256Hex | None = None
+    dry_run: bool
+    waves: list[list[str]] | None = None
+
+class BudgetState(BaseModel):
+    model_config = _FROZEN
+    session_spent: int
+    session_warn_limit: int | None = None
+    session_suspend_limit: int | None = None
+    team_spent: int
+    team_suspend_limit: int | None = None
+    agent_spent: int
+    agent_suspend_limit: int | None = None
+
 class TaintClean(BaseModel):
     model_config = _FROZEN
     kind: Literal["Clean"] = "Clean"

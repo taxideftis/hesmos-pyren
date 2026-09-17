@@ -34,13 +34,59 @@ pub struct TaintSource {
 }
 
 /// Taint marking (PT-12). Transition is mandatory: any Envelope derived from a Tainted
-/// one is Tainted (S5) — enforced by [`Envelope::derive`], the only sanctioned derivation
-/// path.
+/// one is Tainted (S5) — enforced by [`Envelope::derive`] (derivation) and
+/// [`Taint::merge`] (multi-source assembly); [`Envelope::mark_tainted`] is the ONLY
+/// sanctioned Clean→Tainted path (SS-20 rule 1), so an assembly can never produce an
+/// unmarked external envelope by forgetting to check.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Taint {
     Clean,
     Tainted { source: TaintSource },
+}
+
+impl Taint {
+    pub fn is_clean(&self) -> bool {
+        matches!(self, Taint::Clean)
+    }
+
+    /// Multi-source assembly rule (S5 over a merge): the result is Tainted when ANY
+    /// input is, carrying the FIRST Tainted source in iteration order — callers pass
+    /// deterministic orders (BTreeSet), so the merged marking is reproducible.
+    pub fn merge<'a>(taints: impl IntoIterator<Item = &'a Taint>) -> Taint {
+        for t in taints {
+            if let Taint::Tainted { source } = t {
+                return Taint::Tainted {
+                    source: source.clone(),
+                };
+            }
+        }
+        Taint::Clean
+    }
+}
+
+/// SS-20 rule 1 judgment — unmarked external import. `declared_external` is the
+/// importer's declaration (tool layer reports the read origin); `Err` means the data
+/// may not enter (or stay) Clean: mark it via [`Envelope::mark_tainted`] or reject the
+/// import. Consumed by the W5 output assembly AND by the Python boundary (WP-P2e), the
+/// only two places externalness can be declared.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnmarkedExternalImport {
+    pub origin: String,
+}
+
+pub fn external_import_verdict(
+    declared_external: bool,
+    taint: &Taint,
+    origin: &str,
+) -> Result<(), UnmarkedExternalImport> {
+    if declared_external && taint.is_clean() {
+        Err(UnmarkedExternalImport {
+            origin: origin.to_string(),
+        })
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -84,6 +130,16 @@ impl Envelope {
     /// threshold math lives in the guard's G0 gate against `PolicySet::max_transfer_tokens`).
     pub fn transfer_bytes(&self) -> usize {
         crate::canonical_bytes(self).len()
+    }
+
+    /// The ONLY sanctioned Clean→Tainted transition (SS-20 rule 1): a boundary that
+    /// declares its data external marks it HERE, so the marking decision has one home.
+    /// First mark wins (idempotent, deterministic) — re-marking an already-Tainted
+    /// envelope never overwrites the original source, keeping provenance honest.
+    pub fn mark_tainted(&mut self, source: TaintSource) {
+        if self.taint.is_clean() {
+            self.taint = Taint::Tainted { source };
+        }
     }
 }
 
@@ -182,5 +238,110 @@ mod tests {
     #[test]
     fn transfer_size_deterministic() {
         assert_eq!(sample().transfer_bytes(), sample().transfer_bytes());
+    }
+
+    /// S5 merge rule: any Tainted source marks the assembly; iteration order decides
+    /// WHICH source survives, so the caller's order is part of the reproducibility
+    /// contract (BTreeSet orders are).
+    #[test]
+    fn merge_is_tainted_when_any_source_is() {
+        let tainted = Taint::Tainted {
+            source: TaintSource {
+                origin: "web.search".into(),
+            },
+        };
+        let other = Taint::Tainted {
+            source: TaintSource {
+                origin: "file.read".into(),
+            },
+        };
+        assert!(Taint::merge([]).is_clean());
+        assert!(Taint::merge([&Taint::Clean, &Taint::Clean]).is_clean());
+        assert_eq!(Taint::merge([&Taint::Clean, &tainted]), tainted);
+        assert_eq!(Taint::merge([&tainted, &other]), tainted);
+        assert_eq!(Taint::merge([&other, &tainted]), other);
+    }
+
+    /// SS-20 rule 1: mark_tainted is the only Clean→Tainted path, is idempotent, and
+    /// never overwrites an existing source (first provenance wins).
+    #[test]
+    fn mark_tainted_is_first_mark_wins() {
+        let mut env = Envelope {
+            taint: Taint::Clean,
+            ..sample()
+        };
+        env.mark_tainted(TaintSource {
+            origin: "web.search".into(),
+        });
+        assert_eq!(
+            env.taint,
+            Taint::Tainted {
+                source: TaintSource {
+                    origin: "web.search".into()
+                }
+            }
+        );
+        env.mark_tainted(TaintSource {
+            origin: "other.tool".into(),
+        });
+        assert_eq!(
+            env.taint,
+            Taint::Tainted {
+                source: TaintSource {
+                    origin: "web.search".into()
+                }
+            },
+            "re-marking never overwrites the original source"
+        );
+    }
+
+    /// SS-20 rule 1 pre-gate predicate: a declared-external CLEAN import is rejected
+    /// (mark or refuse); marked imports and non-external data pass.
+    #[test]
+    fn unmarked_external_import_is_rejected() {
+        let clean = Taint::Clean;
+        let tainted = Taint::Tainted {
+            source: TaintSource {
+                origin: "web.search".into(),
+            },
+        };
+        assert!(external_import_verdict(true, &clean, "web.search").is_err());
+        assert!(external_import_verdict(true, &tainted, "web.search").is_ok());
+        assert!(external_import_verdict(false, &clean, "").is_ok());
+        let err = external_import_verdict(true, &clean, "file.read").unwrap_err();
+        assert_eq!(err.origin, "file.read");
+    }
+
+    /// US-24 AC3 (Matthias N5 core half): a Clean envelope STAYS Clean through every
+    /// derivation — taint only ever arrives via an explicit mark, never by proximity.
+    #[test]
+    fn clean_envelope_derives_clean_without_marks() {
+        let clean = Envelope {
+            taint: Taint::Clean,
+            ..sample()
+        };
+        let derived = clean.derive(
+            EnvelopeId::from_u128(9),
+            NodeId::new("z"),
+            EnvelopeKind::Result,
+            Payload {
+                schema_id: SchemaId::new("out.v1"),
+                json: serde_json::json!({}),
+            },
+            CorrelationId::from_u128(9),
+        );
+        assert!(derived.taint.is_clean());
+        // And a Tainted origin derives Tainted through the same path (S5, both arms).
+        let derived_tainted = sample().derive(
+            EnvelopeId::from_u128(10),
+            NodeId::new("z"),
+            EnvelopeKind::Result,
+            Payload {
+                schema_id: SchemaId::new("out.v1"),
+                json: serde_json::json!({}),
+            },
+            CorrelationId::from_u128(10),
+        );
+        assert!(!derived_tainted.taint.is_clean());
     }
 }

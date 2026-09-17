@@ -71,9 +71,13 @@ impl GateConductor for GuardGates {
     fn run_gate(&self, req: GateRun<'_>) -> GateVerdict {
         // Unknown gate references are a composition invariant: the plan compiled, so a
         // ref that `instantiate` cannot name is a schema bug — panic, never pass.
-        let gate: Box<dyn Gate> =
-            instantiate(req.gate_ref, req.session_task, req.spawn_token_floor)
-                .unwrap_or_else(|| panic!("unknown gate reference `{}`", req.gate_ref));
+        let deps = hesmos_guard::GateDeps {
+            session_task: req.session_task,
+            spawn_token_floor: req.spawn_token_floor,
+            grantor_profile: req.grantor_profile,
+        };
+        let gate: Box<dyn Gate> = instantiate(req.gate_ref, &deps)
+            .unwrap_or_else(|| panic!("unknown gate reference `{}`", req.gate_ref));
 
         let phase = match req.phase {
             RunnerPhase::Pre => GatePhase::Pre,
@@ -275,6 +279,30 @@ pub fn resolve_executor() -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
+// Cache sentinel — the SS-18 core-half adapter (WP-P2a)
+// ---------------------------------------------------------------------------
+
+/// Verifies each turn's prompt hash against the session's frozen system-prompt
+/// invariant (the guard's [`hesmos_guard::cache`] judgment behind the seam).
+///
+/// ponytail: W5 has no system prompt — the frozen invariant stays `None`, so every
+/// turn verifies Stable and the echo world runs clean. upgrade trigger: WP-P2d's
+/// prompt builder (PY-7) lands → the CLI freezes the builder's SS-04 hash at session
+/// start and every LLM turn becomes a verified obligation.
+pub struct CacheSentinel {
+    pub frozen: Option<hesmos_guard::PromptInvariant>,
+}
+
+impl hesmos_orchestrator::CacheConductor for CacheSentinel {
+    fn verify_turn(&self, reported: Option<&Sha256Hex>) -> hesmos_orchestrator::CacheVerdict {
+        match hesmos_guard::verify_turn(self.frozen.as_ref(), reported) {
+            hesmos_guard::CacheJudgment::Stable => hesmos_orchestrator::CacheVerdict::Stable,
+            hesmos_guard::CacheJudgment::Violated => hesmos_orchestrator::CacheVerdict::Violated,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Sinks — the trace log plus one-line progress on stderr
 // ---------------------------------------------------------------------------
 
@@ -342,6 +370,94 @@ impl EventSink for ProgressTee {
             );
         }
         appended
+    }
+}
+
+/// A quiet tee: appends to the session's [`EventLog`] and renders nothing. Used by
+/// `hesmos eval`, whose stdout belongs to the suite report — a progress line in that
+/// stream would corrupt both the human render and `--json` parsing.
+pub struct LogOnlyTee {
+    pub log: EventLog,
+}
+
+impl EventSink for LogOnlyTee {
+    fn emit(&self, e: PendingEvent) -> TraceEvent {
+        self.log.emit(e)
+    }
+}
+
+/// Composes the run/replay/eval progress sink: the EventLog tee (the evidence —
+/// always) plus, ONLY when both the build and the environment opted in, the SS-25
+/// OTel export fanout (ADR-0007 — the collector is bathos-owned infrastructure).
+///
+/// Opt-in is two-key (CF-18): a default build contains no send path at all (feature
+/// off), and a feature build exports nothing unless `HESMOS_OTEL_ENDPOINT` is set.
+/// Silence in the default state is the ui-spec §8.6 contract; each visible line
+/// below is the ONE guidance line its state is allowed.
+pub fn progress_sink(log: EventLog, style: crate::tokens::Style) -> Box<dyn EventSink> {
+    #[cfg(feature = "otel")]
+    if let Some(cfg) = hesmos_trace::config_from_env() {
+        return match hesmos_trace::OtelExporter::connect(&cfg) {
+            Ok(otel) => {
+                println!(
+                    "{}",
+                    style.dim(&format!(
+                        "OTel 내보내기 활성화 — {} (수집기는 bathos 소유 — ADR-0007)",
+                        cfg.endpoint
+                    ))
+                );
+                Box::new(OtelFanout { log, otel })
+            }
+            Err(msg) => {
+                // Export setup failing must never take the session down — the local
+                // chain is the evidence; OTel is an additional observability fanout.
+                println!(
+                    "{}",
+                    style.dim(&format!(
+                        "! OTel 내보내기 초기화 실패 — 로컬 체인만 기록합니다: {msg}"
+                    ))
+                );
+                Box::new(ProgressTee { log, style })
+            }
+        };
+    }
+    #[cfg(not(feature = "otel"))]
+    if std::env::var("HESMOS_OTEL_ENDPOINT").is_ok_and(|v| !v.trim().is_empty()) {
+        println!(
+            "{}",
+            style.dim(
+                "HESMOS_OTEL_ENDPOINT가 설정됐지만 이 빌드에는 OTel 기능이 없습니다 — \
+                 `cargo build -p hesmos --features otel`로 빌드하면 bathos 수집기(ADR-0007)로 내보냅니다"
+            )
+        );
+    }
+    Box::new(ProgressTee { log, style })
+}
+
+/// The feature-gated fanout: chain first (the local evidence is primary), then the
+/// export of the CONFIRMED (chained) event — an unconfirmed pending event must not
+/// reach an external system.
+#[cfg(feature = "otel")]
+struct OtelFanout {
+    log: EventLog,
+    otel: hesmos_trace::OtelExporter,
+}
+
+#[cfg(feature = "otel")]
+impl EventSink for OtelFanout {
+    fn emit(&self, e: PendingEvent) -> TraceEvent {
+        let appended = self.log.emit(e);
+        self.otel.export(&appended);
+        appended
+    }
+}
+
+/// The runner owns the sink and drops it when the run loop ends — that drop is the
+/// last moment to push the batch exporter's buffered records to the collector.
+#[cfg(feature = "otel")]
+impl Drop for OtelFanout {
+    fn drop(&mut self) {
+        self.otel.flush();
     }
 }
 

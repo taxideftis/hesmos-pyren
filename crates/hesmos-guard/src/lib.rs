@@ -1,13 +1,14 @@
 //! hesmos-guard — judgment only (code-structure §1/§3).
 //!
 //! Owns gates and their verdicts, the TYPE-4 contract validator (field-absence matrix),
-//! bounded retry, node leases, permission enforcement and (post-W3) the prompt-hash
-//! cache check. Forbidden here: LLM calls and direct event-file writes — every verdict
-//! leaves through the PORT-1 [`hesmos_core::EventSink`] (P6).
+//! bounded retry, node leases, permission enforcement (SS-19) and the prompt-cache
+//! invariant verifier (SS-18 core half). Forbidden here: LLM calls and direct event-file
+//! writes — every verdict leaves through the PORT-1 [`hesmos_core::EventSink`] (P6).
 //!
 //! Modules: `contract_check` (WP-P1b) · `policy_set`/`gate`/`gates`/`retry`/`lease`
-//! (WP-P1c). Arriving later: permission + cache (WP-P2a).
+//! (WP-P1c) · `gates::permission` + `cache` (WP-P2a).
 
+mod cache;
 mod contract_check;
 mod gate;
 mod gates;
@@ -19,6 +20,7 @@ mod retry;
 mod test_support;
 
 // D-7: the public surface is the re-export list below; the modules themselves are private.
+pub use cache::{CACHE_GATE_ID, CacheJudgment, PromptInvariant, verify_turn};
 pub use contract_check::{
     SNAPSHOT_TOKEN_LIMIT, provisional_assumptions, snapshot_token_count, validate,
 };
@@ -27,8 +29,9 @@ pub use gate::{
     run_checked, run_checked_with, session_verdict, terminal_declaration_verdict,
 };
 pub use gates::{
-    BudgetGate, ContractGate, DoneCriteriaGate, G0Gate, OverDelegationGate, PermissionGate,
-    RubricGate, SchemaGate, instantiate,
+    BudgetGate, ContractGate, DoneCriteriaGate, G0Gate, GateDeps, GrantorAuthority,
+    OverDelegationGate, PermissionGate, RubricGate, SchemaGate, cap_within_grantor, instantiate,
+    network_admitted, tool_admitted,
 };
 /// The matrix judgment type lives in core (shared with the orchestrator's router via
 /// the D-2 seam); re-exported here so P1b consumers keep their import path.

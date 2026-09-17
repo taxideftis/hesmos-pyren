@@ -5,6 +5,7 @@
 
 이 가이드는 Hesmos를 AI 에이전트 실행기로 **가장 빨리, 가장 정확하게** 쓰는 방법을 다룹니다.
 설계 배경이 궁금하면 [설계명세](pre/Agent_Hesmos_Spec_Arc.md)를, 요약은 [README](../README.md)를 참고하세요.
+스타일이 적용된 HTML 버전도 제공됩니다: [user-guide-kr.html](user-guide-kr.html).
 
 ---
 

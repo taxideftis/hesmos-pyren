@@ -31,3 +31,6 @@ serde_yaml_ng = "0.10"
 # Session store / metering ledger (WP-P1d/P1e). `bundled` pins SQLite at build time so the
 # single-writer session DB does not depend on the host's libsqlite3.
 rusqlite = { version = "0.40", features = ["bundled"] }
+# Cooperative SIGINT (WP-P1e, CLI-1 exit 130): the handler flips the runner's shared
+# interrupt flag so the session suspends at the next checkpoint instead of dying mid-step.
+ctrlc = "3"

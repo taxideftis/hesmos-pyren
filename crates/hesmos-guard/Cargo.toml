@@ -7,6 +7,6 @@ edition.workspace = true
 # D-2: core is the only internal dependency — no sibling-crate deps, ever.
 hesmos-core = { path = "../hesmos-core" }
 serde.workspace = true
-
-[dev-dependencies]
-serde_json.workspace = true
+serde_json.workspace = true       # payload json inspection (rubric/schema gates)
+thiserror.workspace = true        # LeaseError / PolicyError derives (WP-P1c)
+serde_yaml_ng.workspace = true    # PolicySet loading (story §6 — maintained serde_yaml fork)

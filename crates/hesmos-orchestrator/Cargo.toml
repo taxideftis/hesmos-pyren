@@ -12,3 +12,11 @@ serde_json.workspace = true
 # Plan YAML surface (WP-P1a §6). serde_yaml is archived; serde_yaml_ng is the workspace
 # standard fork — no new dependency family introduced.
 serde_yaml_ng.workspace = true
+# Session WAL (WP-P1e): sessions/checkpoints tables in checkpoint.db. `bundled` pins
+# SQLite so the session store does not depend on the host's libsqlite3 (workspace
+# declaration from WP-P0a; budget's ledger shares the same file).
+rusqlite.workspace = true
+thiserror.workspace = true
+# Stored session rows carry ULID strings; rebuilding a SessionHandle for `trace replay`
+# parses them back (same crate/feature set core uses — no new dependency family).
+ulid.workspace = true

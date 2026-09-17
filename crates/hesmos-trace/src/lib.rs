@@ -5,13 +5,17 @@
 //! chain head to bathos audit via PORT-2. Forbidden here: judgments and scheduling —
 //! the trace layer never intervenes in execution.
 //!
-//! P0b status: EventLog + chain verification live. Later: replay/seal (WP-P1e), query
-//! and the opt-in OTel sink (WP-P3a).
+//! Modules: `log` (WP-P0b) · `seal`/`replay` (WP-P1e). Arriving later: query and the
+//! opt-in OTel sink (WP-P3a).
 
 mod log;
+mod replay;
+mod seal;
 
 // D-7: the public surface is the re-export list below; the modules themselves are private.
-pub use log::{EventLog, GENESIS_PREV_HASH, TraceError};
+pub use log::{EventLog, GENESIS_PREV_HASH, LoadOutcome, TraceError, load_path};
+pub use replay::{ReproductionComparison, chain_head, compare_reproduction};
+pub use seal::{SealError, SealOutcome, seal};
 
 /// Compile-time proof of the D-2 dependency direction: the crate reaches the chain-hash
 /// primitive it links events with.

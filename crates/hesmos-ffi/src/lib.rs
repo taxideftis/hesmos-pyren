@@ -50,10 +50,13 @@ fn session_open<'py>(
     out.set_item("session_id", session_id)?;
     out.set_item("run_id", run_id)?;
     out.set_item("seed", seed)?;
-    out.set_item("budget", match budget_value {
-        Some(v) => marshal::value_to_py(py, &v)?,
-        None => py.None().into_bound(py),
-    })?;
+    out.set_item(
+        "budget",
+        match budget_value {
+            Some(v) => marshal::value_to_py(py, &v)?,
+            None => py.None().into_bound(py),
+        },
+    )?;
     out.set_item("team_id", team_id)?;
     out.set_item("state", "Init")?;
     // No plan_hash yet: the plan enters at session_run (PY-5) and plan.compiled
@@ -63,14 +66,19 @@ fn session_open<'py>(
 
 fn new_seed_from_ulid() -> u64 {
     let bytes = ulid::Ulid::generate().to_bytes();
-    u64::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]])
+    u64::from_be_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ])
 }
 
 /// Boundary check for the budget spec (trust boundary — FFI-SCHEMA on violation).
 /// Spec form only: {"tokens": int>=0} with optional {"cost_usd": number>=0}.
 fn validate_budget_spec(py: Python<'_>, value: &serde_json::Value) -> PyResult<()> {
     let Some(obj) = value.as_object() else {
-        return Err(marshal::schema_violation(py, "budget must be an object {tokens[, cost_usd]}".into()));
+        return Err(marshal::schema_violation(
+            py,
+            "budget must be an object {tokens[, cost_usd]}".into(),
+        ));
     };
     match obj.get("tokens") {
         Some(serde_json::Value::Number(n)) if n.as_u64().is_some() => {}
@@ -78,13 +86,16 @@ fn validate_budget_spec(py: Python<'_>, value: &serde_json::Value) -> PyResult<(
             return Err(marshal::schema_violation(
                 py,
                 "budget.tokens must be a non-negative integer".into(),
-            ))
+            ));
         }
     }
-    if let Some(cost) = obj.get("cost_usd") {
-        if !cost.is_number() {
-            return Err(marshal::schema_violation(py, "budget.cost_usd must be a number".into()));
-        }
+    if let Some(cost) = obj.get("cost_usd")
+        && !cost.is_number()
+    {
+        return Err(marshal::schema_violation(
+            py,
+            "budget.cost_usd must be a number".into(),
+        ));
     }
     Ok(())
 }

@@ -51,7 +51,14 @@ pub fn raise_hesmos(
 /// FFI-SCHEMA: dual-validation failure at the boundary — core state stays untouched
 /// (exceptions.md §7, US-01 AC2).
 pub fn schema_violation(py: Python<'_>, message: String) -> PyErr {
-    raise_hesmos(py, "FfiError", "Ffi", "FFI-SCHEMA", message, "check the payload against hesmos.models")
+    raise_hesmos(
+        py,
+        "FfiError",
+        "Ffi",
+        "FFI-SCHEMA",
+        message,
+        "check the payload against hesmos.models",
+    )
 }
 
 /// Convert a Python object into a JSON value. Total over None/bool/int/float/str/

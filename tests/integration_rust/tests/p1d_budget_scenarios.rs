@@ -32,7 +32,7 @@ fn entry(role: &str, tokens: u64) -> MeterEntry {
 #[test]
 fn t8_warn_at_eighty_percent_execution_continues() {
     let session = SessionId::from_u128(1);
-    let budget = SessionBudget::freeze(envelope_250k(), session.clone(), None);
+    let budget = SessionBudget::freeze(envelope_250k(), session, None);
     let ledger = Ledger::open(&session, ":memory:").expect("ledger");
     let mut engine = BudgetEngine::new(budget);
 
@@ -73,7 +73,7 @@ fn t8_warn_at_eighty_percent_execution_continues() {
 #[test]
 fn t8_suspend_at_full_pre_blocks_all_calls() {
     let session = SessionId::from_u128(2);
-    let budget = SessionBudget::freeze(envelope_250k(), session.clone(), None);
+    let budget = SessionBudget::freeze(envelope_250k(), session, None);
     let ledger = Ledger::open(&session, ":memory:").expect("ledger");
     let mut engine = BudgetEngine::new(budget);
 
@@ -141,7 +141,8 @@ fn t8_three_scope_caps_trip_and_attribute() {
         }
     );
 
-    // A different role at the same session spend stays clear — agent caps are per-role.
+    // A different role at a below-warn session spend stays clear — agent caps are
+    // strictly per-role (the reviewer has none).
     let mut engine = {
         let mut env = envelope_250k();
         env.agent_max_tokens
@@ -149,7 +150,7 @@ fn t8_three_scope_caps_trip_and_attribute() {
         BudgetEngine::new(SessionBudget::freeze(env, SessionId::from_u128(3), None))
     };
     assert_eq!(
-        engine.evaluate(200_000, 0, &AgentRole::new("reviewer"), 0),
+        engine.evaluate(100_000, 0, &AgentRole::new("reviewer"), 0),
         ThresholdVerdict::Clear
     );
 }

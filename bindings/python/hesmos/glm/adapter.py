@@ -29,7 +29,12 @@ from hesmos import models
 
 __all__ = ["GlmAdapter", "model_plan_conformance"]
 
-ENDPOINT = "https://api.z.ai/api/anthropic"
+# Full messages URL, not the bare service base: the Anthropic-compatible
+# convention appends /v1/messages to the base (same as the official SDK's
+# base_url). Measured live 2026-09-17 — POSTing the bare base
+# (https://api.z.ai/api/anthropic) returns HTTP 200 wrapping the gateway
+# envelope {"code": 500, "msg": "404 NOT_FOUND", "success": false}.
+ENDPOINT = "https://api.z.ai/api/anthropic/v1/messages"
 MODEL_REF = "glm-5.3-flash"
 _API_KEY_ENV = "HESMOS_GLM_API_KEY"
 _ANTHROPIC_VERSION = "2023-06-01"
@@ -209,9 +214,18 @@ class GlmAdapter:
             snippet = snippet.replace(self._key, "***")
             raise GlmResponseError(f"GLM HTTP {status}: {snippet}")
         try:
-            return response.json()
+            body = response.json()
         except (ValueError, AttributeError) as error:
             raise GlmResponseError(f"GLM non-JSON response: {error}") from error
+        # The Z.ai gateway reports transport failures (bad path, bad params) as
+        # HTTP 200 wrapping {"code", "msg", "success": false} with no Anthropic
+        # "type" field — measured live 2026-09-17. Surface the provider's own
+        # msg here; falling through would misreport as "missing usage tokens".
+        if "type" not in body and "msg" in body:
+            raise GlmResponseError(
+                f"GLM gateway error code={body.get('code')!r}: {body.get('msg')!r}"
+            )
+        return body
 
     def _from_wire(self, body: dict[str, Any], latency_ms: int) -> models.LlmReply:
         usage = body.get("usage") or {}

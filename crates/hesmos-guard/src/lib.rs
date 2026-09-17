@@ -5,15 +5,37 @@
 //! cache check. Forbidden here: LLM calls and direct event-file writes — every verdict
 //! leaves through the PORT-1 [`hesmos_core::EventSink`] (P6).
 //!
-//! Modules: `contract_check` (WP-P1b). Arriving later: gate framework + gates/ +
-//! retry + lease (WP-P1c), permission + cache (WP-P2a).
+//! Modules: `contract_check` (WP-P1b) · `policy_set`/`gate`/`gates`/`retry`/`lease`
+//! (WP-P1c). Arriving later: permission + cache (WP-P2a).
 
 mod contract_check;
+mod gate;
+mod gates;
+mod lease;
+mod policy_set;
+mod retry;
+
+#[cfg(test)]
+mod test_support;
 
 // D-7: the public surface is the re-export list below; the modules themselves are private.
 pub use contract_check::{
-    ContractJudgment, SNAPSHOT_TOKEN_LIMIT, provisional_assumptions, snapshot_token_count, validate,
+    SNAPSHOT_TOKEN_LIMIT, provisional_assumptions, snapshot_token_count, validate,
 };
+pub use gate::{
+    BoundaryVerdict, Gate, GateCtx, GatePhase, chain_min_score, derive_boundary_verdict,
+    run_checked, run_checked_with, session_verdict, terminal_declaration_verdict,
+};
+pub use gates::{
+    BudgetGate, ContractGate, DoneCriteriaGate, G0Gate, OverDelegationGate, PermissionGate,
+    RubricGate, SchemaGate, instantiate,
+};
+/// The matrix judgment type lives in core (shared with the orchestrator's router via
+/// the D-2 seam); re-exported here so P1b consumers keep their import path.
+pub use hesmos_core::ContractJudgment;
+pub use lease::{LeaseError, LeaseRegistry};
+pub use policy_set::{PolicyError, check_consistency, effective, load, parse_str};
+pub use retry::{RetryOutcome, RetryTracker, escalation_attrs};
 
 /// Compile-time proof of the D-2 dependency direction: the crate reaches the core
 /// verdict vocabulary it will emit as gate.pass/gate.fail from WP-P1c on.

@@ -167,6 +167,29 @@ def test_missing_tokens_raises_no_swallow_ss17_rule3():
         adapter(stub_post(wire_response(body)))(make_request())
 
 
+def test_gateway_200_error_envelope_surfaces_provider_msg():
+    # Regression pin (live finding 2026-09-17): the Z.ai gateway wraps transport
+    # failures (e.g. 404 NOT_FOUND on a wrong path) in HTTP 200 envelopes. The
+    # adapter must report the provider's msg — not misreport "missing usage".
+    envelope = {"code": 500, "msg": "404 NOT_FOUND", "success": False}
+    with pytest.raises(GlmResponseError, match="404 NOT_FOUND") as excinfo:
+        adapter(stub_post(wire_response(envelope)))(make_request())
+    assert "missing usage" not in str(excinfo.value)
+
+
+def test_anthropic_typed_response_passes_envelope_check():
+    # A real Messages response carries type="message" even if a provider ever
+    # added a "msg" key — the envelope check must not fire on it.
+    body = {
+        "type": "message",
+        "msg": None,
+        "content": [{"type": "text", "text": "done"}],
+        "usage": {"input_tokens": 2, "output_tokens": 1},
+    }
+    reply = adapter(stub_post(wire_response(body)))(make_request())
+    assert reply.tokens_in == 2
+
+
 def test_tool_use_blocks_map_to_tool_calls():
     body = {
         "content": [

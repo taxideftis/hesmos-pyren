@@ -33,7 +33,9 @@ use std::sync::Arc;
 
 use crate::exit::{EXIT_COMPILE, EXIT_OK, EXIT_USAGE};
 
-pub(crate) fn dispatch() -> i32 {
+// `pub` (was P0a's `pub(crate)`): the binary now dispatches through the library
+// (lib/bin split), so the seat must be visible across the crate boundary.
+pub fn dispatch() -> i32 {
     let usage = |msg: &str| -> i32 {
         eprintln!("✗ USAGE-ARGS — {msg}");
         eprintln!("  사용법: hesmos serve [--bind <addr>] [--port <n>]  (기본 127.0.0.1:7330)");

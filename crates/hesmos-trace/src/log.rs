@@ -166,6 +166,24 @@ impl EventLog {
         Ok(count)
     }
 
+    /// The display/inspection read path (CLI-2): parses every stored event AND checks
+    /// the chain, but unlike `open`/`verify` it does not throw the readable prefix away
+    /// when a fault is found. A tampered trace must still render its summary for
+    /// investigation (ui-spec §4.4 — "요약 렌더 유지 + 상단 배지 + exit 30"), so the
+    /// fault travels WITH the parsed events instead of replacing them.
+    ///
+    /// The `path` variant is the standalone form for consumers that hold no `EventLog`
+    /// (read-only inspection of another session's log).
+    pub fn load(&self) -> LoadOutcome {
+        let path = self
+            .state
+            .lock()
+            .expect("event log mutex poisoned")
+            .path
+            .clone();
+        load_path(&path)
+    }
+
     /// Test/inspection accessor: the log's file path.
     #[cfg(test)]
     fn path(&self) -> PathBuf {
@@ -186,6 +204,96 @@ impl EventSink for EventLog {
         self.try_append(e)
             .expect("trace append failure is fatal to the evidence chain")
     }
+}
+
+/// What [`EventLog::load`] / [`load_path`] found.
+///
+/// On a chain fault the parse STOPS at the faulted event: everything after a break
+/// could be attacker-forged, so rendering it adds no trustworthy information — the
+/// prefix up to and including the fault is exactly the investigation material
+/// (ui-spec §4.4: 요약 렌더 유지 + 상단 배지).
+#[derive(Debug)]
+pub enum LoadOutcome {
+    /// Chain intact — the events are verified evidence.
+    Ok(Vec<TraceEvent>),
+    /// The parsed prefix INCLUDING the faulted event, plus the first fault.
+    Tampered {
+        events: Vec<TraceEvent>,
+        fault: TraceError,
+    },
+    /// The log could not be read at all (I/O) — no events to show.
+    Io(std::io::Error),
+}
+
+/// Read-only inspection of a log file (CLI-2/CLI-4): parse + verify in one pass,
+/// keeping the parsed prefix on failure. This is the standalone form for consumers
+/// that hold no `EventLog` — crucially, it never goes through [`EventLog::open`],
+/// whose eager scan exists to protect APPENDS and therefore refuses a tampered file
+/// outright (an inspector must still render the readable prefix with its badge).
+pub fn load_path(path: &Path) -> LoadOutcome {
+    let file = match File::open(path) {
+        Ok(f) => f,
+        Err(e) => return LoadOutcome::Io(e),
+    };
+    let reader = BufReader::new(file);
+    let mut events = Vec::new();
+    let mut prev = match Sha256Hex::parse(GENESIS_PREV_HASH) {
+        Ok(h) => h,
+        Err(_) => unreachable!("genesis is valid hex"),
+    };
+
+    for (i, line) in reader.lines().enumerate() {
+        // The next expected seq IS the count of accepted events so far — one counter,
+        // no drift between the two.
+        let expected_seq = events.len() as u64;
+        let line = match line {
+            Ok(l) => l,
+            Err(e) => return LoadOutcome::Io(e),
+        };
+        let event: TraceEvent = match serde_json::from_str(&line) {
+            Ok(e) => e,
+            Err(_) => {
+                return LoadOutcome::Tampered {
+                    events,
+                    fault: TraceError::InvalidLine { line: i + 1 },
+                };
+            }
+        };
+        // Chain checks mirror `scan` exactly; on the first fault we stop trusting and
+        // return what parsed. The event that failed the check is still included (it is
+        // the one the badge points at).
+        let fault = if event.seq != expected_seq {
+            Some(TraceError::SeqGap {
+                expected: expected_seq,
+                found: event.seq,
+            })
+        } else if event.prev_hash != prev {
+            Some(TraceError::BrokenLink {
+                seq: event.seq,
+                stored_prev: event.prev_hash.clone(),
+                expected_prev: prev.clone(),
+            })
+        } else {
+            let computed = chain_hash(
+                &event.prev_hash,
+                event.seq,
+                event.kind,
+                event.node.as_ref(),
+                &event.attrs,
+            );
+            (computed != event.hash).then(|| TraceError::HashMismatch {
+                seq: event.seq,
+                stored: event.hash.clone(),
+                computed,
+            })
+        };
+        events.push(event);
+        if let Some(fault) = fault {
+            return LoadOutcome::Tampered { events, fault };
+        }
+        prev = events.last().expect("just pushed").hash.clone();
+    }
+    LoadOutcome::Ok(events)
 }
 
 /// Recomputes the whole chain from the file. Returns (event count, head hash) or the
@@ -474,5 +582,50 @@ mod tests {
             h.join().expect("thread");
         }
         assert_eq!(log.verify().expect("intact"), 8, "seqs 0..8 with no gaps");
+    }
+
+    /// `load` on an intact chain returns every event as verified evidence.
+    #[test]
+    fn load_returns_all_events_when_intact() {
+        let root = TempRoot::new("load-ok");
+        let log = root.log(0xA7);
+        log.emit(session_open(0xA7));
+        log.emit(gate_fail(0.9));
+        match log.load() {
+            LoadOutcome::Ok(events) => {
+                assert_eq!(events.len(), 2);
+                assert_eq!(events[0].kind, EventKind::SessionOpen);
+            }
+            other => panic!("expected Ok, got {other:?}"),
+        }
+    }
+
+    /// `load` on a tampered chain keeps the parsed events (display material, ui-spec
+    /// §4.4) AND names the first fault — the CLI-2 badge needs both.
+    #[test]
+    fn load_keeps_events_alongside_the_fault() {
+        let root = TempRoot::new("load-tamper");
+        let log = root.log(0xA8);
+        log.emit(gate_fail(0.9));
+        log.emit(gate_fail(0.8));
+        let path = log.path();
+        let mut lines: Vec<String> = std::fs::read_to_string(&path)
+            .expect("read log")
+            .lines()
+            .map(String::from)
+            .collect();
+        let mut value: serde_json::Value =
+            serde_json::from_str(&lines[1]).expect("parse event line");
+        value["attrs"]["score"] = serde_json::json!(0.1);
+        lines[1] = value.to_string();
+        std::fs::write(&path, lines.join("\n") + "\n").expect("rewrite log");
+
+        match log.load() {
+            LoadOutcome::Tampered { events, fault } => {
+                assert_eq!(events.len(), 2, "the offending event is still shown");
+                assert!(matches!(fault, TraceError::HashMismatch { seq: 1, .. }));
+            }
+            other => panic!("expected Tampered, got {other:?}"),
+        }
     }
 }

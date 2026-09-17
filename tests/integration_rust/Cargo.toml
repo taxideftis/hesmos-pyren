@@ -16,3 +16,8 @@ hesmos-orchestrator = { path = "../../crates/hesmos-orchestrator" }
 hesmos-guard = { path = "../../crates/hesmos-guard" }
 # T8 budget scenarios drive the freeze→meter→judge loop (WP-P1d).
 hesmos-budget = { path = "../../crates/hesmos-budget" }
+# T7/T11 E2E drive the CLI library surface in-process — the same paths the
+# binary dispatches through (WP-P1e).
+hesmos = { path = "../../hesmos" }
+# Chain inspection of the produced sessions (read-only load_path).
+hesmos-trace = { path = "../../crates/hesmos-trace" }

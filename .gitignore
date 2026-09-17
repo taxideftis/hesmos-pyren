@@ -22,3 +22,6 @@ assets/
 
 # Local brand asset source (committed copies live in docs/img/)
 git-asset/
+
+# Local runtime session artifacts (smoke tests, CLI runs)
+.hesmos/

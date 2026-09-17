@@ -1,0 +1,19 @@
+[package]
+name = "hesmos"
+version.workspace = true
+edition.workspace = true
+description = "Agent Hesmos CLI — run/trace/budget/eval (+serve behind the `serve` feature)"
+
+[dependencies]
+# CLI skeleton dependency (WP-P0a); clap is the only hard dep until WP-P1e fills the
+# commands. No invented flags here — flag surfaces arrive with their CLI-1..5 contracts.
+clap.workspace = true
+
+# SS-24/P8: the serve command maps onto the gateway's public API only (D-4). The
+# dependency is optional so the default build carries no HTTP stack.
+gateway = { path = "../gateway", optional = true }
+
+[features]
+# Pre-wired in WP-P0a (code-structure §4): `cargo build -p hesmos --features serve`
+# compiles; the dispatch seat exists — implementation is Andrew's (WP-P3c, serve.rs).
+serve = ["dep:gateway"]

@@ -1,0 +1,21 @@
+[package]
+name = "gateway"
+version = "0.1.0"
+edition = "2021"
+description = "Agent Hesmos read-only HTTP/WS adapter over the core (SS-24, HTTP-1~5)"
+
+# Boring-choice stack per project-context §1: axum + tokio, no other runtime deps.
+# The dashboard UI is server-rendered HTML + one CSS file + minimal WS JS —
+# no template engine, no frontend framework (ui-spec §9.0 forbids them).
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+# Real-socket E2E only (CF-16 boots the actual server). No runtime use — see the
+# static boundary test that keeps outbound HTTP/WS clients out of src/.
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+tokio-tungstenite = "0.26"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }

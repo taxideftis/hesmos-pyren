@@ -1,0 +1,14 @@
+[package]
+name = "hesmos-orchestrator"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# D-2: core is the only internal dependency — no sibling-crate deps, ever.
+hesmos-core = { path = "../hesmos-core" }
+# CompiledGraph / PRNG / receipts serialize for snapshots and replay (WP-P1e).
+serde.workspace = true
+serde_json.workspace = true
+# Plan YAML surface (WP-P1a §6). serde_yaml is archived; serde_yaml_ng is the workspace
+# standard fork — no new dependency family introduced.
+serde_yaml_ng.workspace = true

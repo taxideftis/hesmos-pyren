@@ -1,0 +1,4 @@
+# Single pinned channel — channel drifting is forbidden (code-structure §6): determinism
+# and reproducibility (S1) require every build to use the same compiler.
+[toolchain]
+channel = "stable"
